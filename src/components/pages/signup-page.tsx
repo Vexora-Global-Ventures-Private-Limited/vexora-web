@@ -7,13 +7,15 @@ import {
   ArrowLeft, ArrowRight, Lock, Phone, Mail, Check, ShieldCheck, Sparkles,
   User, MapPin,
 } from "lucide-react"
-import { useNav, mockUsers, type Tier } from "@/lib/nav-store"
+import { useNav, type Tier } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
+import { useAuth } from "@/hooks/use-auth"
+import { getApiErrorMessage } from "@/lib/api-error"
 
 type Step = "method" | "otp" | "profile"
 
 export function SignupPage() {
-  const { login } = useNav()
+  const { login: setNavUser, setUserTier } = useNav()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Only ever follow an internal, relative path here -- a raw external URL in
@@ -23,29 +25,81 @@ export function SignupPage() {
   const destination = returnTo || ROUTES.dashboard
   const [step, setStep] = useState<Step>("method")
   const [phone, setPhone] = useState("")
-  const [otp, setOtp] = useState(["", "", "", ""])
+  // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
+  const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [profile, setProfile] = useState({ name: "", email: "", city: "", role: "Buyer" })
   const [submitted, setSubmitted] = useState(false)
+  const [otpId, setOtpId] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [resendCooldown, setResendCooldown] = useState(0)
 
+  const { requestOtp, resendOtp, verifyOtp, isRequestingOtp, isVerifyingOtp } = useAuth()
+
+  // Ticks resendCooldown down to 0 once a second while the OTP step is up.
+  // One interval for the whole visit to this step (not recreated every
+  // tick) — the functional update form means it doesn't need resendCooldown
+  // itself as a dependency, and naturally stays at 0 once it gets there.
   useEffect(() => {
-    if (step === "otp") {
-      // Auto-fill OTP after 1s for demo
-      const t = setTimeout(() => setOtp(["4", "2", "0", "7"]), 1000)
-      return () => clearTimeout(t)
-    }
+    if (step !== "otp") return
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(t)
   }, [step])
 
+  const handleSendOtp = async () => {
+    if (phone.length !== 10) return
+    setFormError(null)
+    try {
+      const result = await requestOtp(`+91${phone}`, "mobile", "login")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setStep("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the number and try again.")
+    }
+  }
+
+  const handleVerifyOtp = async () => {
+    if (!otpId || !otp.every((d) => d)) return
+    setFormError(null)
+    try {
+      await verifyOtp(otpId, otp.join(""))
+      setStep("profile")
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
+    }
+  }
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return
+    setFormError(null)
+    try {
+      const result = await resendOtp(`+91${phone}`, "mobile", "login")
+      setOtpId(result.data.otpId)
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't resend the OTP. Please try again.")
+    }
+  }
+
+  // The backend has no profile/tier/membership save endpoint integrated here
+  // (only auth is) — the role picked in this step just sets the client-side
+  // tier label and display name locally, same as the rest of this page's
+  // mock demo state.
   const completeSignup = () => {
     const tier: Tier =
       profile.role === "Owner/Seller" ? "M" :
       profile.role === "Broker" ? "J" :
       profile.role === "Developer" ? "V" : "F"
-    login({
-      ...mockUsers[tier],
-      name: profile.name || "New Member",
-      email: profile.email || "new@vxp.in",
-      initials: (profile.name || "NM").split(" ").map((n) => n.charAt(0)).join("").slice(0, 2).toUpperCase(),
-    })
+    setUserTier(tier)
+    // Reflect the just-entered name immediately. Read fresh state (not the
+    // `user` closed over at render) so this merges on top of the tier change
+    // just applied above, instead of reverting it.
+    const freshUser = useNav.getState().user
+    if (freshUser && profile.name) {
+      const initials = profile.name.split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p.charAt(0).toUpperCase()).join("") || freshUser.initials
+      setNavUser({ ...freshUser, name: profile.name, initials })
+    }
     setSubmitted(true)
   }
 
@@ -130,15 +184,18 @@ export function SignupPage() {
                   </div>
                 </div>
 
+                {formError && (
+                  <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                )}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => phone.length === 10 && setStep("otp")}
-                  disabled={phone.length !== 10}
+                  onClick={handleSendOtp}
+                  disabled={phone.length !== 10 || isRequestingOtp}
                   className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    Send OTP <ArrowRight className="h-4 w-4" />
+                    {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                   </span>
                 </motion.button>
 
@@ -192,9 +249,9 @@ export function SignupPage() {
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Verify OTP</h2>
                 </div>
                 <p className="mt-2 text-sm text-brand-secondary/60">
-                  Enter the 4-digit code sent to <b>+91 {phone || "98765 43210"}</b>
+                  Enter the 6-digit code sent to <b>+91 {phone || "98765 43210"}</b>
                 </p>
-                <div className="mt-6 flex justify-center gap-3">
+                <div className="mt-6 flex justify-center gap-2">
                   {otp.map((digit, i) => (
                     <input
                       key={i}
@@ -206,25 +263,38 @@ export function SignupPage() {
                         const next = [...otp]
                         next[i] = v
                         setOtp(next)
-                        if (v && i < 3) document.getElementById(`signup-otp-${i + 1}`)?.focus()
+                        if (v && i < otp.length - 1) document.getElementById(`signup-otp-${i + 1}`)?.focus()
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Backspace" && !otp[i] && i > 0) document.getElementById(`signup-otp-${i - 1}`)?.focus()
                       }}
                       id={`signup-otp-${i}`}
-                      className="h-14 w-14 border border-brand-border-light bg-card text-center font-serif text-2xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
+                      className="h-12 w-12 border border-brand-border-light bg-card text-center font-serif text-xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
                     />
                   ))}
                 </div>
                 <div className="mt-4 text-center text-xs text-brand-secondary/55">
-                  Didn&apos;t receive? <button className="font-bold text-brand-primary-dark hover:underline">Resend in 0:28</button>
+                  Didn&apos;t receive?{" "}
+                  {resendCooldown > 0 ? (
+                    <span className="font-bold text-brand-secondary/40">
+                      Resend in 0:{String(resendCooldown).padStart(2, "0")}
+                    </span>
+                  ) : (
+                    <button onClick={handleResendOtp} className="font-bold text-brand-primary-dark hover:underline">Resend</button>
+                  )}
                 </div>
+                {formError && (
+                  <p className="mt-3 text-center text-xs font-semibold text-red-500">{formError}</p>
+                )}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => otp.every((d) => d) && setStep("profile")}
-                  disabled={!otp.every((d) => d)}
+                  onClick={handleVerifyOtp}
+                  disabled={!otp.every((d) => d) || isVerifyingOtp}
                   className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    Verify &amp; Continue <ArrowRight className="h-4 w-4" />
+                    {isVerifyingOtp ? "Verifying…" : "Verify & Continue"} <ArrowRight className="h-4 w-4" />
                   </span>
                 </motion.button>
               </motion.div>
@@ -305,6 +375,9 @@ export function SignupPage() {
                   </div>
                 </div>
 
+                {formError && (
+                  <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                )}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}

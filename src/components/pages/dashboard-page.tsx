@@ -8,6 +8,7 @@ import {
   Megaphone, Crown, Heart, Send, Bell, Sun, Moon, Gift,
 } from "lucide-react"
 import { useNav, canSell, type User } from "@/lib/nav-store"
+import { useAuth } from "@/hooks/use-auth"
 import { ROUTES } from "@/lib/routes"
 import { useNotificationsStore } from "@/lib/notifications-store"
 import { cn } from "@/lib/utils"
@@ -26,7 +27,11 @@ import { ProjectsTab } from "@/components/dashboards/tabs/projects-tab"
 import { ReferralsTab } from "@/components/dashboards/tabs/referrals-tab"
 
 export function DashboardPage() {
-  const { user, logout } = useNav()
+  const { user } = useNav()
+  // Real sessions: revokes the refresh token server-side and clears the
+  // stored tokens, not just the local nav display state — see the comment
+  // on the same fix in UserNavMenu. No-ops safely for demo/mock sessions.
+  const { logout } = useAuth()
   const searchParams = useSearchParams()
   const tab = searchParams.get("tab") ?? "overview"
   const unreadCount = useNotificationsStore((s) => s.notifications.filter((n) => !n.read).length)

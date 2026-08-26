@@ -9,6 +9,8 @@ import {
 } from "lucide-react"
 import { useNav, mockUsers, type User } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
+import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
+import { getApiErrorMessage } from "@/lib/api-error"
 
 type AuthMethod = "select" | "google-loading" | "mobile" | "email" | "otp"
 
@@ -23,15 +25,27 @@ export function LoginPage() {
   const destination = returnTo || ROUTES.dashboard
   const [method, setMethod] = useState<AuthMethod>("select")
   const [phone, setPhone] = useState("")
-  const [otp, setOtp] = useState(["", "", "", ""])
+  // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
+  const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [submitted, setSubmitted] = useState(false)
+  const [otpId, setOtpId] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [resendCooldown, setResendCooldown] = useState(0)
 
-  const finishLogin = (user: Parameters<typeof login>[0]) => {
+  const {
+    requestOtp, resendOtp, verifyOtp,
+    isRequestingOtp, isVerifyingOtp,
+  } = useAuth()
+
+  // Demo-only path (no email+password endpoint exists on the backend yet) and
+  // the quick-switch demo accounts below both still write directly to the
+  // mock session store.
+  const finishMockLogin = (user: Parameters<typeof login>[0]) => {
     login(user)
     setSubmitted(true)
   }
 
-  // Auto-continue to the destination shortly after a successful mock sign-in --
+  // Auto-continue to the destination shortly after a successful sign-in --
   // back to whatever gated page sent the visitor here, or the dashboard by default.
   useEffect(() => {
     if (!submitted) return
@@ -39,17 +53,54 @@ export function LoginPage() {
     return () => clearTimeout(t)
   }, [submitted, router, destination])
 
-  // Each auth method resolves to a distinct, real account — not a shared
-  // demo account you switch later. Google = a casual buyer signing in fast;
-  // Mobile+OTP = the mobile-first individual seller (Mercury); Email +
-  // Password = a returning broker managing their CRM daily (Jupiter).
-  const handleGoogle = () => {
-    setMethod("google-loading")
-    setTimeout(() => finishLogin(mockUsers.F), 2200)
+  // Ticks resendCooldown down to 0 once a second while the OTP screen is up.
+  // One interval for the whole visit to this screen (not recreated every
+  // tick) — the functional update form means it doesn't need resendCooldown
+  // itself as a dependency, and naturally stays at 0 once it gets there.
+  useEffect(() => {
+    if (method !== "otp") return
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(t)
+  }, [method])
+
+  const handleSendOtp = async () => {
+    if (phone.length !== 10) return
+    setFormError(null)
+    try {
+      const result = await requestOtp(`+91${phone}`, "mobile", "login")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setMethod("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the number and try again.")
+    }
   }
 
-  const handleMobileOtpSubmit = () => finishLogin(mockUsers.M)
-  const handleEmailSubmit = () => finishLogin(mockUsers.J)
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return
+    setFormError(null)
+    try {
+      const result = await resendOtp(`+91${phone}`, "mobile", "login")
+      setOtpId(result.data.otpId)
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't resend the OTP. Please try again.")
+    }
+  }
+
+  const handleMobileOtpSubmit = async () => {
+    if (!otpId || !otp.every((d) => d)) return
+    setFormError(null)
+    try {
+      await verifyOtp(otpId, otp.join(""))
+      setSubmitted(true)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
+    }
+  }
+
+  const handleEmailSubmit = () => finishMockLogin(mockUsers.J)
 
   const demoAccounts: { label: string; user: User }[] = [
     { label: "Free", user: mockUsers.F },
@@ -170,16 +221,36 @@ export function LoginPage() {
                     <p className="mt-2 text-sm text-brand-secondary/60">Choose your preferred method to continue</p>
                   </div>
 
+                  {formError && (
+                    <p className="mt-4 text-center text-xs font-semibold text-red-500">{formError}</p>
+                  )}
+
                   <div className="mt-8 space-y-3">
-                    <motion.button
-                      whileHover={{ scale: 1.02, y: -2 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={handleGoogle}
-                      className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
+                    <GoogleSignInButton
+                      onSuccess={() => setSubmitted(true)}
+                      onError={(error) => {
+                        setFormError(error instanceof Error ? error.message : "Google sign-in failed. Please try again.")
+                        setMethod("select")
+                      }}
                     >
-                      <GoogleIcon />
-                      Continue with Google
-                    </motion.button>
+                      {({ trigger, disabled }) => (
+                        <motion.button
+                          whileHover={{ scale: 1.02, y: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => {
+                            setFormError(null)
+                            setMethod("google-loading")
+                            trigger()
+                          }}
+                          disabled={disabled}
+                          title={disabled ? "Google sign-in is not configured yet" : undefined}
+                          className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface disabled:opacity-50"
+                        >
+                          <GoogleIcon />
+                          Continue with Google
+                        </motion.button>
+                      )}
+                    </GoogleSignInButton>
                     <motion.button
                       whileHover={{ scale: 1.02, y: -2 }}
                       whileTap={{ scale: 0.98 }}
@@ -227,7 +298,7 @@ export function LoginPage() {
                       {demoAccounts.map(({ label, user }) => (
                         <button
                           key={label}
-                          onClick={() => finishLogin(user)}
+                          onClick={() => finishMockLogin(user)}
                           className="border border-brand-border-light bg-card py-2 text-xs font-bold text-brand-secondary hover:border-brand-primary-dark hover:bg-brand-surface"
                         >
                           {label}
@@ -314,7 +385,7 @@ export function LoginPage() {
                   </button>
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Mobile + OTP</h2>
                   <p className="mt-2 text-sm text-brand-secondary/60">
-                    Enter your mobile number — we&apos;ll send a 4-digit OTP.
+                    Enter your mobile number — we&apos;ll send a 6-digit OTP.
                   </p>
                   <div className="mt-6">
                     <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
@@ -332,15 +403,18 @@ export function LoginPage() {
                       />
                     </div>
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => phone.length === 10 && setMethod("otp")}
-                    disabled={phone.length !== 10}
+                    onClick={handleSendOtp}
+                    disabled={phone.length !== 10 || isRequestingOtp}
                     className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Send OTP <ArrowRight className="h-4 w-4" />
+                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>
@@ -363,9 +437,9 @@ export function LoginPage() {
                   </button>
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Verify OTP</h2>
                   <p className="mt-2 text-sm text-brand-secondary/60">
-                    Enter the 4-digit code sent to <span className="font-bold text-brand-secondary">+91 {phone || "98765 43210"}</span>
+                    Enter the 6-digit code sent to <span className="font-bold text-brand-secondary">+91 {phone || "98765 43210"}</span>
                   </p>
-                  <div className="mt-6 flex justify-center gap-3">
+                  <div className="mt-6 flex justify-center gap-2">
                     {otp.map((digit, i) => (
                       <input
                         key={i}
@@ -377,24 +451,38 @@ export function LoginPage() {
                           const next = [...otp]
                           next[i] = v
                           setOtp(next)
-                          if (v && i < 3) document.getElementById(`otp-${i + 1}`)?.focus()
+                          if (v && i < otp.length - 1) document.getElementById(`otp-${i + 1}`)?.focus()
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Backspace" && !otp[i] && i > 0) document.getElementById(`otp-${i - 1}`)?.focus()
                         }}
                         id={`otp-${i}`}
-                        className="h-14 w-14 border border-brand-border-light bg-card text-center font-serif text-2xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
+                        className="h-12 w-12 border border-brand-border-light bg-card text-center font-serif text-xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
                       />
                     ))}
                   </div>
                   <div className="mt-4 text-center text-xs text-brand-secondary/55">
-                    Didn&apos;t receive? <button className="font-bold text-brand-primary-dark hover:underline">Resend in 0:28</button>
+                    Didn&apos;t receive?{" "}
+                    {resendCooldown > 0 ? (
+                      <span className="font-bold text-brand-secondary/40">
+                        Resend in 0:{String(resendCooldown).padStart(2, "0")}
+                      </span>
+                    ) : (
+                      <button onClick={handleResendOtp} className="font-bold text-brand-primary-dark hover:underline">Resend</button>
+                    )}
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-center text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={handleMobileOtpSubmit}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold"
+                    disabled={!otp.every((d) => d) || isVerifyingOtp}
+                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Verify &amp; Continue <ArrowRight className="h-4 w-4" />
+                      {isVerifyingOtp ? "Verifying…" : "Verify & Continue"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>

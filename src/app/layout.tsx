@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Geist, Geist_Mono, Inter, JetBrains_Mono, Playfair_Display, Space_Grotesk } from "next/font/google"
 import "./globals.css"
 import { BRAND_COLORS_INIT_SCRIPT } from "@/lib/apply-brand-colors"
+import { ReduxProvider } from "@/store/provider"
 import { ThemeProvider } from "@/components/theme-provider"
 import { BrandColorProvider } from "@/components/settings/brand-color-provider"
 import { SessionHydrator } from "@/components/site/session-hydrator"
@@ -87,16 +88,18 @@ export default function RootLayout({
         suppressHydrationWarning
         className={`${geistSans.variable} ${geistMono.variable} ${playfair.variable} ${inter.variable} ${jetbrainsMono.variable} ${spaceGrotesk.variable} antialiased bg-brand-tertiary text-brand-secondary min-h-screen flex flex-col font-sans`}
       >
-        <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
-          <script dangerouslySetInnerHTML={{ __html: BRAND_COLORS_INIT_SCRIPT }} />
-          <BrandColorProvider>
-            <SessionHydrator />
-            <Preloader />
-            <TopProgressBar active />
-            <SiteChrome />
-            <SmoothScroll>{children}</SmoothScroll>
-          </BrandColorProvider>
-        </ThemeProvider>
+        <ReduxProvider>
+          <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false} disableTransitionOnChange>
+            <script dangerouslySetInnerHTML={{ __html: BRAND_COLORS_INIT_SCRIPT }} />
+            <BrandColorProvider>
+              <SessionHydrator />
+              <Preloader />
+              <TopProgressBar active />
+              <SiteChrome />
+              <SmoothScroll>{children}</SmoothScroll>
+            </BrandColorProvider>
+          </ThemeProvider>
+        </ReduxProvider>
       </body>
     </html>
   )
