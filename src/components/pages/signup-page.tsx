@@ -9,10 +9,11 @@ import {
 } from "lucide-react"
 import { useNav, type Tier } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
-import { useAuth } from "@/hooks/use-auth"
-import { getApiErrorMessage } from "@/lib/api-error"
+import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
+import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { GoogleIcon } from "@/components/icons/google-icon"
 
-type Step = "method" | "otp" | "profile"
+type Step = "method" | "otp" | "profile" | "google-loading"
 
 export function SignupPage() {
   const { login: setNavUser, setUserTier } = useNav()
@@ -209,9 +210,48 @@ export function SignupPage() {
                   <button className="flex items-center justify-center gap-2 border border-brand-border-light bg-card py-3 text-xs font-bold text-brand-secondary hover:bg-brand-surface">
                     <Mail className="h-3.5 w-3.5 text-brand-primary-dark" /> Email
                   </button>
-                  <button className="flex items-center justify-center gap-2 border border-brand-border-light bg-card py-3 text-xs font-bold text-brand-secondary hover:bg-brand-surface">
-                    <ShieldCheck className="h-3.5 w-3.5 text-brand-primary-dark" /> Google
-                  </button>
+                  <GoogleSignInButton
+                    mode="signup"
+                    // Google verifies the email itself — no OTP step
+                    // (PARTNER-AUTH-INTEGRATION.md §2) — so a successful
+                    // signup goes straight to the profile step, same place
+                    // OTP verification lands.
+                    onSuccess={(result) => {
+                      // Google already verified this email — no reason to
+                      // make them retype it on the profile step below.
+                      const googleEmail = result.data.user.email
+                      if (googleEmail) setProfile((p) => ({ ...p, email: googleEmail }))
+                      setStep("profile")
+                    }}
+                    onError={(error) => {
+                      // mode:"signup" 409s as ALREADY_REGISTERED when the
+                      // Google email is already a VXP account. The "Already
+                      // have an account? Sign in" link is right below.
+                      const code = getApiErrorCode(error)
+                      const message =
+                        code === "ALREADY_REGISTERED"
+                          ? "That Google account already has a VXP account — please sign in below."
+                          : getApiErrorMessage(error) ??
+                            (error instanceof Error ? error.message : "Google sign-up failed. Please try again.")
+                      setFormError(message)
+                      setStep("method")
+                    }}
+                  >
+                    {({ trigger, disabled }) => (
+                      <button
+                        onClick={() => {
+                          setFormError(null)
+                          setStep("google-loading")
+                          trigger()
+                        }}
+                        disabled={disabled}
+                        title={disabled ? "Google sign-in is not configured yet" : undefined}
+                        className="flex items-center justify-center gap-2 border border-brand-border-light bg-card py-3 text-xs font-bold text-brand-secondary hover:bg-brand-surface disabled:opacity-50"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5 text-brand-primary-dark" /> Google
+                      </button>
+                    )}
+                  </GoogleSignInButton>
                 </div>
 
                 <p className="mt-6 text-center text-[11px] leading-relaxed text-brand-secondary/50">
@@ -226,6 +266,34 @@ export function SignupPage() {
                 >
                   Already have an account? Sign in →
                 </button>
+              </motion.div>
+            )}
+
+            {!submitted && step === "google-loading" && (
+              <motion.div
+                key="google-loading"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="bg-card p-12 shadow-2xl shadow-brand-primary-dark/10"
+              >
+                <div className="flex flex-col items-center text-center">
+                  <motion.div
+                    initial={{ scale: 0.6, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.5, ease: "backOut" }}
+                    className="relative mb-6 grid h-20 w-20 place-items-center rounded-full bg-card shadow-xl ring-1 ring-brand-border-light"
+                  >
+                    <GoogleIcon size={36} />
+                    <motion.div
+                      className="absolute -inset-2 rounded-full border-2 border-brand-primary-dark border-t-transparent"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    />
+                  </motion.div>
+                  <h3 className="font-serif text-2xl font-bold text-brand-secondary">Connecting to Google</h3>
+                  <p className="mt-2 text-sm text-brand-secondary/60">Creating your VXP account securely…</p>
+                </div>
               </motion.div>
             )}
 

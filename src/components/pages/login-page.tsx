@@ -10,7 +10,8 @@ import {
 import { useNav, mockUsers, type User } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
-import { getApiErrorMessage } from "@/lib/api-error"
+import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { GoogleIcon } from "@/components/icons/google-icon"
 
 type AuthMethod = "select" | "google-loading" | "mobile" | "email" | "otp"
 
@@ -227,9 +228,21 @@ export function LoginPage() {
 
                   <div className="mt-8 space-y-3">
                     <GoogleSignInButton
+                      mode="login"
                       onSuccess={() => setSubmitted(true)}
                       onError={(error) => {
-                        setFormError(error instanceof Error ? error.message : "Google sign-in failed. Please try again.")
+                        // PARTNER-AUTH-INTEGRATION.md §2 — mode:"login" 404s as
+                        // NOT_REGISTERED when the Google email has no VXP
+                        // account yet. The "New to VXP? Create an account"
+                        // link is already right below this button, so the
+                        // message alone is enough to point them at it.
+                        const code = getApiErrorCode(error)
+                        const message =
+                          code === "NOT_REGISTERED"
+                            ? "No account found for that Google account — please sign up below."
+                            : getApiErrorMessage(error) ??
+                              (error instanceof Error ? error.message : "Google sign-in failed. Please try again.")
+                        setFormError(message)
                         setMethod("select")
                       }}
                     >
@@ -544,16 +557,5 @@ export function LoginPage() {
         </div>
       </div>
     </div>
-  )
-}
-
-function GoogleIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-    </svg>
   )
 }

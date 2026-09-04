@@ -40,9 +40,16 @@ export type VerifyOtpResponse = {
   }
 }
 
+export type GoogleMode = "login" | "signup"
+
 export type GoogleLoginBody = {
   code: string
   redirectUri: string
+  // NEW (PARTNER-AUTH-INTEGRATION.md §2) — Google has no OTP step, so this is
+  // the only signal that tells the backend which screen sent the request:
+  // "login" 404s as NOT_REGISTERED if the email isn't a known account yet;
+  // "signup" 409s as ALREADY_REGISTERED if it already is.
+  mode: GoogleMode
 }
 
 export type GoogleLoginResponse = {

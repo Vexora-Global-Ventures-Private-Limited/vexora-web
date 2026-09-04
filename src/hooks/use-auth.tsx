@@ -13,6 +13,7 @@ import {
   type OtpChannel,
   type OtpPurpose,
   type GoogleLoginResponse,
+  type GoogleMode,
 } from "@/store/api/authApi"
 import { setTokens, clearTokens, getRefreshToken } from "@/lib/auth-tokens"
 import { useNav, type User } from "@/lib/nav-store"
@@ -104,8 +105,8 @@ export function useAuth() {
   )
 
   const loginWithGoogle = useCallback(
-    async (code: string, redirectUri: string) => {
-      const result = await googleLoginMutation({ code, redirectUri }).unwrap()
+    async (code: string, redirectUri: string, mode: GoogleMode) => {
+      const result = await googleLoginMutation({ code, redirectUri, mode }).unwrap()
       setTokens({ accessToken: result.data.accessToken, refreshToken: result.data.refreshToken })
       await finishLogin(result.data.user)
       return result
@@ -146,6 +147,10 @@ const GOOGLE_NOT_CONFIGURED = new Error(
 export type GoogleSignInRenderProps = { trigger: () => void; disabled: boolean }
 
 export type GoogleSignInButtonProps = {
+  // PARTNER-AUTH-INTEGRATION.md §2 — pass "login" from the login screen,
+  // "signup" from the signup screen. Same account, different screen: the
+  // backend decides NOT_REGISTERED vs. ALREADY_REGISTERED off this alone.
+  mode: GoogleMode
   onSuccess: (result: GoogleLoginResponse) => void
   onError?: (error: unknown) => void
   children: (props: GoogleSignInRenderProps) => ReactNode
@@ -165,18 +170,18 @@ export type GoogleSignInButtonProps = {
  * (ConfiguredGoogleTrigger) that is only mounted at all when configured —
  * the unconfigured branch below never touches useGoogleLogin.
  */
-export function GoogleSignInButton({ onSuccess, onError, children }: GoogleSignInButtonProps) {
+export function GoogleSignInButton({ mode, onSuccess, onError, children }: GoogleSignInButtonProps) {
   if (!process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID) {
     return <>{children({ trigger: () => onError?.(GOOGLE_NOT_CONFIGURED), disabled: true })}</>
   }
   return (
-    <ConfiguredGoogleTrigger onSuccess={onSuccess} onError={onError}>
+    <ConfiguredGoogleTrigger mode={mode} onSuccess={onSuccess} onError={onError}>
       {children}
     </ConfiguredGoogleTrigger>
   )
 }
 
-function ConfiguredGoogleTrigger({ onSuccess, onError, children }: GoogleSignInButtonProps) {
+function ConfiguredGoogleTrigger({ mode, onSuccess, onError, children }: GoogleSignInButtonProps) {
   const { loginWithGoogle } = useAuth()
 
   // redirectUri is fixed to "postmessage" — the value Google's client
@@ -186,7 +191,7 @@ function ConfiguredGoogleTrigger({ onSuccess, onError, children }: GoogleSignInB
     flow: "auth-code",
     onSuccess: async (codeResponse) => {
       try {
-        const result = await loginWithGoogle(codeResponse.code, "postmessage")
+        const result = await loginWithGoogle(codeResponse.code, "postmessage", mode)
         onSuccess(result)
       } catch (error) {
         onError?.(error)

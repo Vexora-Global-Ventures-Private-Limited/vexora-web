@@ -9,11 +9,21 @@ export type ApiErrorBody = { error: { code: string; message: string } }
 
 /** Extracts the backend's own message from a caught RTK Query mutation error, if present. */
 export function getApiErrorMessage(error: unknown): string | undefined {
+  const message = getErrorEnvelope(error)?.message
+  return typeof message === "string" ? message : undefined
+}
+
+/** Extracts the backend's own error `code` from a caught RTK Query mutation error, if present. */
+export function getApiErrorCode(error: unknown): string | undefined {
+  const code = getErrorEnvelope(error)?.code
+  return typeof code === "string" ? code : undefined
+}
+
+function getErrorEnvelope(error: unknown): { code?: unknown; message?: unknown } | undefined {
   if (!error || typeof error !== "object" || !("data" in error)) return undefined
   const data = (error as { data?: unknown }).data
   if (!data || typeof data !== "object" || !("error" in data)) return undefined
   const inner = (data as { error?: unknown }).error
-  if (!inner || typeof inner !== "object" || !("message" in inner)) return undefined
-  const message = (inner as { message?: unknown }).message
-  return typeof message === "string" ? message : undefined
+  if (!inner || typeof inner !== "object") return undefined
+  return inner as { code?: unknown; message?: unknown }
 }
