@@ -61,6 +61,17 @@ export type GoogleLoginResponse = {
   }
 }
 
+// /auth/signup is a distinct endpoint from /auth/otp/request — no `purpose`
+// field (signup itself is the purpose) — verified against the live dev API
+// for both channels: {"destination":"+91...","channel":"mobile"} and
+// {"destination":"...@...","channel":"email"} both 200 with the same
+// {otpId, expiresInSeconds} shape as an OTP request. Verification still goes
+// through the shared /auth/otp/verify below.
+export type SignupBody = {
+  destination: string
+  channel: OtpChannel
+}
+
 export type RefreshTokenBody = {
   refreshToken: string
 }
@@ -99,6 +110,9 @@ export const authApi = baseApi.injectEndpoints({
     resendOtp: builder.mutation<OtpRequestResponse, OtpRequestBody>({
       query: (body) => ({ url: "/api/v1/auth/otp/resend", method: "POST", body }),
     }),
+    signup: builder.mutation<OtpRequestResponse, SignupBody>({
+      query: (body) => ({ url: "/api/v1/auth/signup", method: "POST", body }),
+    }),
     googleLogin: builder.mutation<GoogleLoginResponse, GoogleLoginBody>({
       query: (body) => ({ url: "/api/v1/auth/google", method: "POST", body }),
     }),
@@ -120,6 +134,7 @@ export const {
   useRequestOtpMutation,
   useVerifyOtpMutation,
   useResendOtpMutation,
+  useSignupMutation,
   useGoogleLoginMutation,
   useLogoutMutation,
   useGetMeQuery,

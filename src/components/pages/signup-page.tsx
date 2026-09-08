@@ -12,8 +12,11 @@ import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { GoogleIcon } from "@/components/icons/google-icon"
+import type { OtpChannel } from "@/store/api/authApi"
 
-type Step = "method" | "otp" | "profile" | "google-loading"
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
+type Step = "method" | "email" | "otp" | "profile" | "google-loading"
 
 export function SignupPage() {
   const { login: setNavUser, setUserTier } = useNav()
@@ -26,6 +29,8 @@ export function SignupPage() {
   const destination = returnTo || ROUTES.dashboard
   const [step, setStep] = useState<Step>("method")
   const [phone, setPhone] = useState("")
+  const [email, setEmail] = useState("")
+  const [channel, setChannel] = useState<OtpChannel>("mobile")
   // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
   const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [profile, setProfile] = useState({ name: "", email: "", city: "", role: "Buyer" })
@@ -34,7 +39,8 @@ export function SignupPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [resendCooldown, setResendCooldown] = useState(0)
 
-  const { requestOtp, resendOtp, verifyOtp, isRequestingOtp, isVerifyingOtp } = useAuth()
+  const { signup, verifyOtp, isSigningUp, isVerifyingOtp } = useAuth()
+  const otpDestination = channel === "mobile" ? `+91${phone}` : email
 
   // Ticks resendCooldown down to 0 once a second while the OTP step is up.
   // One interval for the whole visit to this step (not recreated every
@@ -46,17 +52,33 @@ export function SignupPage() {
     return () => clearInterval(t)
   }, [step])
 
-  const handleSendOtp = async () => {
+  const handleSendMobileOtp = async () => {
     if (phone.length !== 10) return
     setFormError(null)
     try {
-      const result = await requestOtp(`+91${phone}`, "mobile", "login")
+      const result = await signup(`+91${phone}`, "mobile")
       setOtpId(result.data.otpId)
       setOtp(["", "", "", "", "", ""])
+      setChannel("mobile")
       setStep("otp")
       setResendCooldown(30)
     } catch (error) {
       setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the number and try again.")
+    }
+  }
+
+  const handleSendEmailOtp = async () => {
+    if (!isValidEmail(email)) return
+    setFormError(null)
+    try {
+      const result = await signup(email, "email")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setChannel("email")
+      setStep("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the address and try again.")
     }
   }
 
@@ -65,17 +87,24 @@ export function SignupPage() {
     setFormError(null)
     try {
       await verifyOtp(otpId, otp.join(""))
+      // Google's flow already prefills profile.email from the verified
+      // Google account (see below) -- do the same here so an email-channel
+      // signup doesn't ask the user to retype the address they just verified.
+      if (channel === "email") setProfile((p) => ({ ...p, email }))
       setStep("profile")
     } catch (error) {
       setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
     }
   }
 
+  // /auth/signup has no separate resend endpoint -- /auth/otp/resend expects
+  // an OtpPurpose and "signup" isn't one, so a fresh code is just another
+  // /auth/signup call (it returns a new otpId same as the first one did).
   const handleResendOtp = async () => {
     if (resendCooldown > 0) return
     setFormError(null)
     try {
-      const result = await resendOtp(`+91${phone}`, "mobile", "login")
+      const result = await signup(otpDestination, channel)
       setOtpId(result.data.otpId)
       setResendCooldown(30)
     } catch (error) {
@@ -191,12 +220,12 @@ export function SignupPage() {
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={handleSendOtp}
-                  disabled={phone.length !== 10 || isRequestingOtp}
+                  onClick={handleSendMobileOtp}
+                  disabled={phone.length !== 10 || isSigningUp}
                   className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                 >
                   <span className="relative z-10 flex items-center gap-2">
-                    {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
+                    {isSigningUp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                   </span>
                 </motion.button>
 
@@ -207,7 +236,10 @@ export function SignupPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  <button className="flex items-center justify-center gap-2 border border-brand-border-light bg-card py-3 text-xs font-bold text-brand-secondary hover:bg-brand-surface">
+                  <button
+                    onClick={() => setStep("email")}
+                    className="flex items-center justify-center gap-2 border border-brand-border-light bg-card py-3 text-xs font-bold text-brand-secondary hover:bg-brand-surface"
+                  >
                     <Mail className="h-3.5 w-3.5 text-brand-primary-dark" /> Email
                   </button>
                   <GoogleSignInButton
@@ -269,6 +301,60 @@ export function SignupPage() {
               </motion.div>
             )}
 
+            {!submitted && step === "email" && (
+              <motion.div
+                key="email"
+                initial={{ opacity: 0, x: 20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -20 }}
+                transition={{ duration: 0.4 }}
+                className="bg-card p-8 shadow-2xl shadow-brand-primary-dark/10"
+              >
+                <button
+                  onClick={() => setStep("method")}
+                  className="mb-4 flex items-center gap-2 text-xs font-semibold text-brand-secondary/55 hover:text-brand-secondary"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" /> All sign-up options
+                </button>
+                <div className="mb-1 flex items-center gap-2">
+                  <Mail className="h-5 w-5 text-brand-primary-dark" />
+                  <h2 className="font-serif text-3xl font-bold text-brand-secondary">Sign up with email</h2>
+                </div>
+                <p className="mt-2 text-sm text-brand-secondary/60">
+                  Enter your email — we&apos;ll send a 6-digit OTP.
+                </p>
+                <div className="mt-6">
+                  <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
+                    Email address
+                  </label>
+                  <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
+                    <Mail className="h-4 w-4 text-brand-primary-dark" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="you@email.com"
+                      className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+                    />
+                  </div>
+                </div>
+                {formError && (
+                  <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                )}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={handleSendEmailOtp}
+                  disabled={!isValidEmail(email) || isSigningUp}
+                  className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
+                >
+                  <span className="relative z-10 flex items-center gap-2">
+                    {isSigningUp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
+                  </span>
+                </motion.button>
+              </motion.div>
+            )}
+
             {!submitted && step === "google-loading" && (
               <motion.div
                 key="google-loading"
@@ -307,17 +393,17 @@ export function SignupPage() {
                 className="bg-card p-8 shadow-2xl shadow-brand-primary-dark/10"
               >
                 <button
-                  onClick={() => setStep("method")}
+                  onClick={() => setStep(channel === "mobile" ? "method" : "email")}
                   className="mb-4 flex items-center gap-2 text-xs font-semibold text-brand-secondary/55 hover:text-brand-secondary"
                 >
-                  <ArrowLeft className="h-3.5 w-3.5" /> Change number
+                  <ArrowLeft className="h-3.5 w-3.5" /> {channel === "mobile" ? "Change number" : "Change email"}
                 </button>
                 <div className="mb-1 flex items-center gap-2">
                   <Lock className="h-5 w-5 text-brand-primary-dark" />
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Verify OTP</h2>
                 </div>
                 <p className="mt-2 text-sm text-brand-secondary/60">
-                  Enter the 6-digit code sent to <b>+91 {phone || "98765 43210"}</b>
+                  Enter the 6-digit code sent to <b>{channel === "mobile" ? `+91 ${phone || "98765 43210"}` : email}</b>
                 </p>
                 <div className="mt-6 flex justify-center gap-2">
                   {otp.map((digit, i) => (

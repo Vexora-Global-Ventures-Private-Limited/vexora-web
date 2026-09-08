@@ -6,6 +6,7 @@ import {
   useRequestOtpMutation,
   useVerifyOtpMutation,
   useResendOtpMutation,
+  useSignupMutation,
   useGoogleLoginMutation,
   useLogoutMutation,
   useLazyGetMeQuery,
@@ -62,6 +63,7 @@ export function useAuth() {
   const [requestOtpMutation, requestOtpState] = useRequestOtpMutation()
   const [verifyOtpMutation, verifyOtpState] = useVerifyOtpMutation()
   const [resendOtpMutation, resendOtpState] = useResendOtpMutation()
+  const [signupMutation, signupState] = useSignupMutation()
   const [googleLoginMutation, googleLoginState] = useGoogleLoginMutation()
   const [logoutMutation] = useLogoutMutation()
   const [triggerGetMe] = useLazyGetMeQuery()
@@ -92,6 +94,16 @@ export function useAuth() {
     (destination: string, channel: OtpChannel, purpose: OtpPurpose) =>
       resendOtpMutation({ destination, channel, purpose }).unwrap(),
     [resendOtpMutation],
+  )
+
+  // /auth/signup — distinct from requestOtp's /auth/otp/request: this is
+  // what a *new* account should call (no `purpose` field, it IS the
+  // purpose), for either channel. Resend still just re-calls this same
+  // mutation for a fresh otpId, since /auth/otp/resend expects an OtpPurpose
+  // and "signup" isn't one.
+  const signup = useCallback(
+    (destination: string, channel: OtpChannel) => signupMutation({ destination, channel }).unwrap(),
+    [signupMutation],
   )
 
   const verifyOtp = useCallback(
@@ -127,14 +139,17 @@ export function useAuth() {
   return {
     requestOtp,
     resendOtp,
+    signup,
     verifyOtp,
     loginWithGoogle,
     logout,
     isRequestingOtp: requestOtpState.isLoading,
     isResendingOtp: resendOtpState.isLoading,
+    isSigningUp: signupState.isLoading,
     isVerifyingOtp: verifyOtpState.isLoading,
     isGoogleLoggingIn: googleLoginState.isLoading,
     requestOtpError: requestOtpState.error,
+    signupError: signupState.error,
     verifyOtpError: verifyOtpState.error,
     googleLoginError: googleLoginState.error,
   }

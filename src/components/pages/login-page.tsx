@@ -7,16 +7,17 @@ import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft, Lock, Phone, Mail, ArrowRight, ShieldCheck, Sparkles, CheckCircle2,
 } from "lucide-react"
-import { useNav, mockUsers, type User } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { GoogleIcon } from "@/components/icons/google-icon"
+import type { OtpChannel } from "@/store/api/authApi"
+
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
 type AuthMethod = "select" | "google-loading" | "mobile" | "email" | "otp"
 
 export function LoginPage() {
-  const { login } = useNav()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Only ever follow an internal, relative path here -- a raw external URL in
@@ -26,6 +27,8 @@ export function LoginPage() {
   const destination = returnTo || ROUTES.dashboard
   const [method, setMethod] = useState<AuthMethod>("select")
   const [phone, setPhone] = useState("")
+  const [email, setEmail] = useState("")
+  const [channel, setChannel] = useState<OtpChannel>("mobile")
   // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
   const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [submitted, setSubmitted] = useState(false)
@@ -38,13 +41,7 @@ export function LoginPage() {
     isRequestingOtp, isVerifyingOtp,
   } = useAuth()
 
-  // Demo-only path (no email+password endpoint exists on the backend yet) and
-  // the quick-switch demo accounts below both still write directly to the
-  // mock session store.
-  const finishMockLogin = (user: Parameters<typeof login>[0]) => {
-    login(user)
-    setSubmitted(true)
-  }
+  const otpDestination = channel === "mobile" ? `+91${phone}` : email
 
   // Auto-continue to the destination shortly after a successful sign-in --
   // back to whatever gated page sent the visitor here, or the dashboard by default.
@@ -64,13 +61,14 @@ export function LoginPage() {
     return () => clearInterval(t)
   }, [method])
 
-  const handleSendOtp = async () => {
+  const handleSendMobileOtp = async () => {
     if (phone.length !== 10) return
     setFormError(null)
     try {
       const result = await requestOtp(`+91${phone}`, "mobile", "login")
       setOtpId(result.data.otpId)
       setOtp(["", "", "", "", "", ""])
+      setChannel("mobile")
       setMethod("otp")
       setResendCooldown(30)
     } catch (error) {
@@ -78,11 +76,26 @@ export function LoginPage() {
     }
   }
 
+  const handleSendEmailOtp = async () => {
+    if (!isValidEmail(email)) return
+    setFormError(null)
+    try {
+      const result = await requestOtp(email, "email", "login")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setChannel("email")
+      setMethod("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the address and try again.")
+    }
+  }
+
   const handleResendOtp = async () => {
     if (resendCooldown > 0) return
     setFormError(null)
     try {
-      const result = await resendOtp(`+91${phone}`, "mobile", "login")
+      const result = await resendOtp(otpDestination, channel, "login")
       setOtpId(result.data.otpId)
       setResendCooldown(30)
     } catch (error) {
@@ -90,7 +103,7 @@ export function LoginPage() {
     }
   }
 
-  const handleMobileOtpSubmit = async () => {
+  const handleOtpSubmit = async () => {
     if (!otpId || !otp.every((d) => d)) return
     setFormError(null)
     try {
@@ -100,15 +113,6 @@ export function LoginPage() {
       setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
     }
   }
-
-  const handleEmailSubmit = () => finishMockLogin(mockUsers.J)
-
-  const demoAccounts: { label: string; user: User }[] = [
-    { label: "Free", user: mockUsers.F },
-    { label: "Mercury", user: mockUsers.M },
-    { label: "Jupiter", user: mockUsers.J },
-    { label: "Venus", user: mockUsers.V },
-  ]
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-ink-black">
@@ -278,7 +282,7 @@ export function LoginPage() {
                       onClick={() => setMethod("email")}
                       className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
                     >
-                      <Mail className="h-4 w-4 text-brand-primary-dark" /> Email + Password
+                      <Mail className="h-4 w-4 text-brand-primary-dark" /> Continue with Email
                     </motion.button>
                   </div>
 
@@ -300,25 +304,6 @@ export function LoginPage() {
                     <br />
                     No commissions. No settlement. Visibility &amp; leads only.
                   </p>
-
-                  {/* Demo accounts — each a real, distinct tier reached via its own
-                      button here at sign-in, not by switching tiers after logging in. */}
-                  <div className="mt-6 border-t border-brand-border-light pt-5">
-                    <p className="mb-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-brand-secondary/40">
-                      Or preview a demo account
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {demoAccounts.map(({ label, user }) => (
-                        <button
-                          key={label}
-                          onClick={() => finishMockLogin(user)}
-                          className="border border-brand-border-light bg-card py-2 text-xs font-bold text-brand-secondary hover:border-brand-primary-dark hover:bg-brand-surface"
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </motion.div>
               )}
 
@@ -422,7 +407,7 @@ export function LoginPage() {
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleSendOtp}
+                    onClick={handleSendMobileOtp}
                     disabled={phone.length !== 10 || isRequestingOtp}
                     className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
@@ -443,14 +428,17 @@ export function LoginPage() {
                   className="bg-card p-8 shadow-2xl shadow-brand-primary-dark/10"
                 >
                   <button
-                    onClick={() => setMethod("mobile")}
+                    onClick={() => setMethod(channel)}
                     className="mb-4 flex items-center gap-2 text-xs font-semibold text-brand-secondary/55 hover:text-brand-secondary"
                   >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Change number
+                    <ArrowLeft className="h-3.5 w-3.5" /> {channel === "mobile" ? "Change number" : "Change email"}
                   </button>
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Verify OTP</h2>
                   <p className="mt-2 text-sm text-brand-secondary/60">
-                    Enter the 6-digit code sent to <span className="font-bold text-brand-secondary">+91 {phone || "98765 43210"}</span>
+                    Enter the 6-digit code sent to{" "}
+                    <span className="font-bold text-brand-secondary">
+                      {channel === "mobile" ? `+91 ${phone || "98765 43210"}` : email}
+                    </span>
                   </p>
                   <div className="mt-6 flex justify-center gap-2">
                     {otp.map((digit, i) => (
@@ -490,7 +478,7 @@ export function LoginPage() {
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleMobileOtpSubmit}
+                    onClick={handleOtpSubmit}
                     disabled={!otp.every((d) => d) || isVerifyingOtp}
                     className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
@@ -516,38 +504,37 @@ export function LoginPage() {
                   >
                     <ArrowLeft className="h-3.5 w-3.5" /> All sign-in options
                   </button>
-                  <h2 className="font-serif text-3xl font-bold text-brand-secondary">Email + Password</h2>
-                  <p className="mt-2 text-sm text-brand-secondary/60">Welcome back — sign in with your email.</p>
-                  <div className="mt-6 space-y-4">
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">Email</label>
-                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                        <Mail className="h-4 w-4 text-brand-primary-dark" />
-                        <input type="email" defaultValue="aarav.mehta@gmail.com" className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">Password</label>
-                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                        <Lock className="h-4 w-4 text-brand-primary-dark" />
-                        <input type="password" defaultValue="demo-password" className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-xs">
-                    <label className="flex items-center gap-2 text-brand-secondary/60">
-                      <input type="checkbox" className="h-3 w-3 accent-brand-primary-dark" /> Remember me
+                  <h2 className="font-serif text-3xl font-bold text-brand-secondary">Email</h2>
+                  <p className="mt-2 text-sm text-brand-secondary/60">
+                    Enter your email — we&apos;ll send a 6-digit OTP.
+                  </p>
+                  <div className="mt-6">
+                    <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
+                      Email address
                     </label>
-                    <button className="font-semibold text-brand-primary-dark hover:underline">Forgot?</button>
+                    <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
+                      <Mail className="h-4 w-4 text-brand-primary-dark" />
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="you@email.com"
+                        className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+                      />
+                    </div>
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleEmailSubmit}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold"
+                    onClick={handleSendEmailOtp}
+                    disabled={!isValidEmail(email) || isRequestingOtp}
+                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Sign in <ArrowRight className="h-4 w-4" />
+                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>
