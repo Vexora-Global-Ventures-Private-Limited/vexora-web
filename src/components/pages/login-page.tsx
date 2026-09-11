@@ -7,13 +7,18 @@ import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft, Lock, Phone, Mail, ArrowRight, ShieldCheck, Sparkles, CheckCircle2,
 } from "lucide-react"
-import { useNav, mockUsers, type User } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
+import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
+import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { GoogleIcon } from "@/components/icons/google-icon"
+import { useGuestGuard } from "@/lib/use-session-guard"
+import type { OtpChannel } from "@/store/api/authApi"
+
+const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 
 type AuthMethod = "select" | "google-loading" | "mobile" | "email" | "otp"
 
 export function LoginPage() {
-  const { login } = useNav()
   const router = useRouter()
   const searchParams = useSearchParams()
   // Only ever follow an internal, relative path here -- a raw external URL in
@@ -21,17 +26,26 @@ export function LoginPage() {
   const returnToParam = searchParams.get("returnTo")
   const returnTo = returnToParam && returnToParam.startsWith("/") ? returnToParam : null
   const destination = returnTo || ROUTES.dashboard
+  useGuestGuard(destination)
   const [method, setMethod] = useState<AuthMethod>("select")
   const [phone, setPhone] = useState("")
-  const [otp, setOtp] = useState(["", "", "", ""])
+  const [email, setEmail] = useState("")
+  const [channel, setChannel] = useState<OtpChannel>("mobile")
+  // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
+  const [otp, setOtp] = useState(["", "", "", "", "", ""])
   const [submitted, setSubmitted] = useState(false)
+  const [otpId, setOtpId] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(null)
+  const [resendCooldown, setResendCooldown] = useState(0)
 
-  const finishLogin = (user: Parameters<typeof login>[0]) => {
-    login(user)
-    setSubmitted(true)
-  }
+  const {
+    requestOtp, resendOtp, verifyOtp,
+    isRequestingOtp, isVerifyingOtp,
+  } = useAuth()
 
-  // Auto-continue to the destination shortly after a successful mock sign-in --
+  const otpDestination = channel === "mobile" ? `+91${phone}` : email
+
+  // Auto-continue to the destination shortly after a successful sign-in --
   // back to whatever gated page sent the visitor here, or the dashboard by default.
   useEffect(() => {
     if (!submitted) return
@@ -39,24 +53,68 @@ export function LoginPage() {
     return () => clearTimeout(t)
   }, [submitted, router, destination])
 
-  // Each auth method resolves to a distinct, real account — not a shared
-  // demo account you switch later. Google = a casual buyer signing in fast;
-  // Mobile+OTP = the mobile-first individual seller (Mercury); Email +
-  // Password = a returning broker managing their CRM daily (Jupiter).
-  const handleGoogle = () => {
-    setMethod("google-loading")
-    setTimeout(() => finishLogin(mockUsers.F), 2200)
+  // Ticks resendCooldown down to 0 once a second while the OTP screen is up.
+  // One interval for the whole visit to this screen (not recreated every
+  // tick) — the functional update form means it doesn't need resendCooldown
+  // itself as a dependency, and naturally stays at 0 once it gets there.
+  useEffect(() => {
+    if (method !== "otp") return
+    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000)
+    return () => clearInterval(t)
+  }, [method])
+
+  const handleSendMobileOtp = async () => {
+    if (phone.length !== 10) return
+    setFormError(null)
+    try {
+      const result = await requestOtp(`+91${phone}`, "mobile", "login")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setChannel("mobile")
+      setMethod("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the number and try again.")
+    }
   }
 
-  const handleMobileOtpSubmit = () => finishLogin(mockUsers.M)
-  const handleEmailSubmit = () => finishLogin(mockUsers.J)
+  const handleSendEmailOtp = async () => {
+    if (!isValidEmail(email)) return
+    setFormError(null)
+    try {
+      const result = await requestOtp(email, "email", "login")
+      setOtpId(result.data.otpId)
+      setOtp(["", "", "", "", "", ""])
+      setChannel("email")
+      setMethod("otp")
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the address and try again.")
+    }
+  }
 
-  const demoAccounts: { label: string; user: User }[] = [
-    { label: "Free", user: mockUsers.F },
-    { label: "Mercury", user: mockUsers.M },
-    { label: "Jupiter", user: mockUsers.J },
-    { label: "Venus", user: mockUsers.V },
-  ]
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0) return
+    setFormError(null)
+    try {
+      const result = await resendOtp(otpDestination, channel, "login")
+      setOtpId(result.data.otpId)
+      setResendCooldown(30)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "Couldn't resend the OTP. Please try again.")
+    }
+  }
+
+  const handleOtpSubmit = async () => {
+    if (!otpId || !otp.every((d) => d)) return
+    setFormError(null)
+    try {
+      await verifyOtp(otpId, otp.join(""))
+      setSubmitted(true)
+    } catch (error) {
+      setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
+    }
+  }
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-ink-black">
@@ -170,16 +228,48 @@ export function LoginPage() {
                     <p className="mt-2 text-sm text-brand-secondary/60">Choose your preferred method to continue</p>
                   </div>
 
+                  {formError && (
+                    <p className="mt-4 text-center text-xs font-semibold text-red-500">{formError}</p>
+                  )}
+
                   <div className="mt-8 space-y-3">
-                    <motion.button
-                      whileHover={{ scale: 1.02, y: -2 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={handleGoogle}
-                      className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
+                    <GoogleSignInButton
+                      mode="login"
+                      onSuccess={() => setSubmitted(true)}
+                      onError={(error) => {
+                        // PARTNER-AUTH-INTEGRATION.md §2 — mode:"login" 404s as
+                        // NOT_REGISTERED when the Google email has no VXP
+                        // account yet. The "New to VXP? Create an account"
+                        // link is already right below this button, so the
+                        // message alone is enough to point them at it.
+                        const code = getApiErrorCode(error)
+                        const message =
+                          code === "NOT_REGISTERED"
+                            ? "No account found for that Google account — please sign up below."
+                            : getApiErrorMessage(error) ??
+                              (error instanceof Error ? error.message : "Google sign-in failed. Please try again.")
+                        setFormError(message)
+                        setMethod("select")
+                      }}
                     >
-                      <GoogleIcon />
-                      Continue with Google
-                    </motion.button>
+                      {({ trigger, disabled }) => (
+                        <motion.button
+                          whileHover={{ scale: 1.02, y: -2 }}
+                          whileTap={{ scale: 0.98 }}
+                          onClick={() => {
+                            setFormError(null)
+                            setMethod("google-loading")
+                            trigger()
+                          }}
+                          disabled={disabled}
+                          title={disabled ? "Google sign-in is not configured yet" : undefined}
+                          className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface disabled:opacity-50"
+                        >
+                          <GoogleIcon />
+                          Continue with Google
+                        </motion.button>
+                      )}
+                    </GoogleSignInButton>
                     <motion.button
                       whileHover={{ scale: 1.02, y: -2 }}
                       whileTap={{ scale: 0.98 }}
@@ -194,7 +284,7 @@ export function LoginPage() {
                       onClick={() => setMethod("email")}
                       className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
                     >
-                      <Mail className="h-4 w-4 text-brand-primary-dark" /> Email + Password
+                      <Mail className="h-4 w-4 text-brand-primary-dark" /> Continue with Email
                     </motion.button>
                   </div>
 
@@ -216,25 +306,6 @@ export function LoginPage() {
                     <br />
                     No commissions. No settlement. Visibility &amp; leads only.
                   </p>
-
-                  {/* Demo accounts — each a real, distinct tier reached via its own
-                      button here at sign-in, not by switching tiers after logging in. */}
-                  <div className="mt-6 border-t border-brand-border-light pt-5">
-                    <p className="mb-2.5 text-center text-[10px] font-semibold uppercase tracking-wider text-brand-secondary/40">
-                      Or preview a demo account
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {demoAccounts.map(({ label, user }) => (
-                        <button
-                          key={label}
-                          onClick={() => finishLogin(user)}
-                          className="border border-brand-border-light bg-card py-2 text-xs font-bold text-brand-secondary hover:border-brand-primary-dark hover:bg-brand-surface"
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </motion.div>
               )}
 
@@ -314,7 +385,7 @@ export function LoginPage() {
                   </button>
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Mobile + OTP</h2>
                   <p className="mt-2 text-sm text-brand-secondary/60">
-                    Enter your mobile number — we&apos;ll send a 4-digit OTP.
+                    Enter your mobile number — we&apos;ll send a 6-digit OTP.
                   </p>
                   <div className="mt-6">
                     <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
@@ -332,15 +403,18 @@ export function LoginPage() {
                       />
                     </div>
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => phone.length === 10 && setMethod("otp")}
-                    disabled={phone.length !== 10}
+                    onClick={handleSendMobileOtp}
+                    disabled={phone.length !== 10 || isRequestingOtp}
                     className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Send OTP <ArrowRight className="h-4 w-4" />
+                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>
@@ -356,16 +430,19 @@ export function LoginPage() {
                   className="bg-card p-8 shadow-2xl shadow-brand-primary-dark/10"
                 >
                   <button
-                    onClick={() => setMethod("mobile")}
+                    onClick={() => setMethod(channel)}
                     className="mb-4 flex items-center gap-2 text-xs font-semibold text-brand-secondary/55 hover:text-brand-secondary"
                   >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Change number
+                    <ArrowLeft className="h-3.5 w-3.5" /> {channel === "mobile" ? "Change number" : "Change email"}
                   </button>
                   <h2 className="font-serif text-3xl font-bold text-brand-secondary">Verify OTP</h2>
                   <p className="mt-2 text-sm text-brand-secondary/60">
-                    Enter the 4-digit code sent to <span className="font-bold text-brand-secondary">+91 {phone || "98765 43210"}</span>
+                    Enter the 6-digit code sent to{" "}
+                    <span className="font-bold text-brand-secondary">
+                      {channel === "mobile" ? `+91 ${phone || "98765 43210"}` : email}
+                    </span>
                   </p>
-                  <div className="mt-6 flex justify-center gap-3">
+                  <div className="mt-6 flex justify-center gap-2">
                     {otp.map((digit, i) => (
                       <input
                         key={i}
@@ -377,24 +454,38 @@ export function LoginPage() {
                           const next = [...otp]
                           next[i] = v
                           setOtp(next)
-                          if (v && i < 3) document.getElementById(`otp-${i + 1}`)?.focus()
+                          if (v && i < otp.length - 1) document.getElementById(`otp-${i + 1}`)?.focus()
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Backspace" && !otp[i] && i > 0) document.getElementById(`otp-${i - 1}`)?.focus()
                         }}
                         id={`otp-${i}`}
-                        className="h-14 w-14 border border-brand-border-light bg-card text-center font-serif text-2xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
+                        className="h-12 w-12 border border-brand-border-light bg-card text-center font-serif text-xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
                       />
                     ))}
                   </div>
                   <div className="mt-4 text-center text-xs text-brand-secondary/55">
-                    Didn&apos;t receive? <button className="font-bold text-brand-primary-dark hover:underline">Resend in 0:28</button>
+                    Didn&apos;t receive?{" "}
+                    {resendCooldown > 0 ? (
+                      <span className="font-bold text-brand-secondary/40">
+                        Resend in 0:{String(resendCooldown).padStart(2, "0")}
+                      </span>
+                    ) : (
+                      <button onClick={handleResendOtp} className="font-bold text-brand-primary-dark hover:underline">Resend</button>
+                    )}
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-center text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleMobileOtpSubmit}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold"
+                    onClick={handleOtpSubmit}
+                    disabled={!otp.every((d) => d) || isVerifyingOtp}
+                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Verify &amp; Continue <ArrowRight className="h-4 w-4" />
+                      {isVerifyingOtp ? "Verifying…" : "Verify & Continue"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>
@@ -415,38 +506,37 @@ export function LoginPage() {
                   >
                     <ArrowLeft className="h-3.5 w-3.5" /> All sign-in options
                   </button>
-                  <h2 className="font-serif text-3xl font-bold text-brand-secondary">Email + Password</h2>
-                  <p className="mt-2 text-sm text-brand-secondary/60">Welcome back — sign in with your email.</p>
-                  <div className="mt-6 space-y-4">
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">Email</label>
-                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                        <Mail className="h-4 w-4 text-brand-primary-dark" />
-                        <input type="email" defaultValue="aarav.mehta@gmail.com" className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none" />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">Password</label>
-                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                        <Lock className="h-4 w-4 text-brand-primary-dark" />
-                        <input type="password" defaultValue="demo-password" className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none" />
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between text-xs">
-                    <label className="flex items-center gap-2 text-brand-secondary/60">
-                      <input type="checkbox" className="h-3 w-3 accent-brand-primary-dark" /> Remember me
+                  <h2 className="font-serif text-3xl font-bold text-brand-secondary">Email</h2>
+                  <p className="mt-2 text-sm text-brand-secondary/60">
+                    Enter your email — we&apos;ll send a 6-digit OTP.
+                  </p>
+                  <div className="mt-6">
+                    <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
+                      Email address
                     </label>
-                    <button className="font-semibold text-brand-primary-dark hover:underline">Forgot?</button>
+                    <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
+                      <Mail className="h-4 w-4 text-brand-primary-dark" />
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="you@email.com"
+                        className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+                      />
+                    </div>
                   </div>
+                  {formError && (
+                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
+                  )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleEmailSubmit}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold"
+                    onClick={handleSendEmailOtp}
+                    disabled={!isValidEmail(email) || isRequestingOtp}
+                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
-                      Sign in <ArrowRight className="h-4 w-4" />
+                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
                     </span>
                   </motion.button>
                 </motion.div>
@@ -456,16 +546,5 @@ export function LoginPage() {
         </div>
       </div>
     </div>
-  )
-}
-
-function GoogleIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-    </svg>
   )
 }

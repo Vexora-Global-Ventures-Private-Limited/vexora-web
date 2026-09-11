@@ -6,15 +6,21 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useNav, type User } from "@/lib/nav-store"
+import { type User } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/hooks/use-auth"
 
 /** Signed-in identity chip — replaces the "Log in" button wherever a page's
  *  header needs to reflect auth state instead of always assuming a visitor. */
 export function UserNavMenu({ user, className }: { user: User; className?: string }) {
   const router = useRouter()
-  const logout = useNav((s) => s.logout)
+  // Real sessions: revokes the refresh token server-side and clears the
+  // stored tokens, not just the local nav display state — otherwise a
+  // signed-out user's tokens stay valid in localStorage and the next hard
+  // reload's GET /auth/me refresh (see SessionHydrator) would silently sign
+  // them back in. No-ops safely for demo/mock sessions (no tokens to clear).
+  const { logout } = useAuth()
 
   return (
     <DropdownMenu>
@@ -40,8 +46,8 @@ export function UserNavMenu({ user, className }: { user: User; className?: strin
           <LayoutDashboard className="h-4 w-4" /> Dashboard
         </DropdownMenuItem>
         <DropdownMenuItem
-          onClick={() => {
-            logout()
+          onClick={async () => {
+            await logout()
             router.push(ROUTES.home)
           }}
         >
