@@ -12,6 +12,7 @@ import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { GoogleIcon } from "@/components/icons/google-icon"
+import { useGuestGuard } from "@/lib/use-session-guard"
 import type { OtpChannel } from "@/store/api/authApi"
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
@@ -27,6 +28,7 @@ export function SignupPage() {
   const returnToParam = searchParams.get("returnTo")
   const returnTo = returnToParam && returnToParam.startsWith("/") ? returnToParam : null
   const destination = returnTo || ROUTES.dashboard
+  useGuestGuard(destination)
   const [step, setStep] = useState<Step>("method")
   const [phone, setPhone] = useState("")
   const [email, setEmail] = useState("")

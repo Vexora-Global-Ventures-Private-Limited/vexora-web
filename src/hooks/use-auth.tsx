@@ -213,6 +213,15 @@ function ConfiguredGoogleTrigger({ mode, onSuccess, onError, children }: GoogleS
       }
     },
     onError: (error) => onError?.(error),
+    // Anything that isn't an OAuth error from Google's own server — the
+    // popup getting blocked, closed by the user before completing, or
+    // failing to load — comes through here instead of onError (verified
+    // against @react-oauth/google's source: it routes error_callback here,
+    // completely separately from the callback onError above reads from).
+    // Without this, any of those failures leaves the caller stuck on
+    // whatever "connecting…" state it set before calling trigger(), with no
+    // error and no way back to the method-select screen.
+    onNonOAuthError: (error) => onError?.(error),
   })
 
   return <>{children({ trigger, disabled: false })}</>
