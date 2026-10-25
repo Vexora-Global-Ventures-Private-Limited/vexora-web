@@ -8,7 +8,13 @@ export const ROUTES = {
   signup: "/signup",
   signupWithReturn: (returnTo: string) => `/signup?returnTo=${encodeURIComponent(returnTo)}`,
   properties: "/properties",
-  propertyDetail: (id: string) => `/properties/${id}`,
+  /** /properties with search params (q, city, propertyType, bhk, …) — empty values dropped. */
+  propertiesSearch: (params: Record<string, string | undefined>) => {
+    const qs = new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString()
+    return qs ? `/properties?${qs}` : "/properties"
+  },
+  /** Takes the listing's SLUG — the public detail route resolves slugs, not ids. */
+  propertyDetail: (slug: string) => `/properties/${slug}`,
   newListing: "/listings/new",
   editListing: (id: string) => `/listings/${id}/edit`,
   projects: "/projects",

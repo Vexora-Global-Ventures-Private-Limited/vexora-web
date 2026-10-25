@@ -1,43 +1,71 @@
 "use client"
 
-import { Fragment } from "react"
+import { Fragment, useState } from "react"
 import { motion } from "framer-motion"
 import {
-  ArrowLeft, Plus, Megaphone, Eye, MousePointerClick, TrendingUp, Wallet,
-  Check, Clock, X, Pause, Play, ArrowUpRight, LayoutPanelTop, MapPin,
-  Building2, Crown, ChevronRight,
+  ArrowLeft, Plus, Megaphone, Clock, Wallet, Pause, Play, ArrowUpRight, LayoutPanelTop,
+  Building2, Crown, TrendingUp, AlertCircle,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { ROUTES } from "@/lib/routes"
-import { myAds, type AdStatus } from "@/lib/dashboard-data"
+import { formatPaise } from "@/lib/api-mappers"
+import { getApiErrorMessage } from "@/lib/api-error"
 import { AnimatedCounter } from "@/components/motion/animated-counter"
+import { AdMetricsPanel, formatCtr } from "@/components/ads/ad-metrics-panel"
+import { usePendingOrder, adPendingKey } from "@/hooks/use-checkout"
+import {
+  useGetMyAdsQuery,
+  usePauseAdMutation,
+  useResumeAdMutation,
+  useResubmitAdMutation,
+  useGetAdMetricsQuery,
+  type Ad,
+  type AdProduct,
+} from "@/store/api/adsApi"
 
-const statusStyles: Record<AdStatus, { bg: string; text: string; dot: string }> = {
-  "Draft": { bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
-  "Pending Payment": { bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
-  "Under Review": { bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
-  "Approved": { bg: "bg-cyan-100", text: "text-cyan-700", dot: "bg-cyan-500" },
-  "Live": { bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
-  "Rejected": { bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
-  "Paused": { bg: "bg-orange-100", text: "text-orange-700", dot: "bg-orange-500" },
-  "Completed": { bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
+export const AD_STATUS_STYLE: Record<string, { label: string; bg: string; text: string; dot: string }> = {
+  draft: { label: "Draft", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
+  pending_payment: { label: "Awaiting payment", bg: "bg-amber-100", text: "text-amber-700", dot: "bg-amber-500" },
+  pending_review: { label: "Under review", bg: "bg-blue-100", text: "text-blue-700", dot: "bg-blue-500" },
+  active: { label: "Live", bg: "bg-green-100", text: "text-green-700", dot: "bg-green-500" },
+  paused: { label: "Paused", bg: "bg-orange-100", text: "text-orange-700", dot: "bg-orange-500" },
+  rejected: { label: "Rejected", bg: "bg-red-100", text: "text-red-700", dot: "bg-red-500" },
+  completed: { label: "Completed", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
+  expired: { label: "Expired", bg: "bg-gray-100", text: "text-gray-700", dot: "bg-gray-400" },
 }
 
-const adTypeIcons: Record<string, typeof LayoutPanelTop> = {
-  "Home Banner": LayoutPanelTop,
-  "City Advertisement": MapPin,
-  "Featured Developer": Building2,
-  "Project Promotion": Play,
-  "Sponsored Properties": Crown,
+export const AD_PRODUCT_LABEL: Record<AdProduct, string> = {
+  banner: "Home Banner",
+  sponsored: "Sponsored Listing",
+  featured: "Featured Developer",
+  project_promotion: "Project Promotion",
 }
 
+const productIcons: Record<AdProduct, typeof LayoutPanelTop> = {
+  banner: LayoutPanelTop,
+  sponsored: Crown,
+  featured: Building2,
+  project_promotion: Play,
+}
+
+// Spend counts only ads that got past payment.
+const PAID_STATUSES = new Set(["pending_review", "active", "paused", "completed", "expired", "rejected"])
+
+const formatDate = (iso: string | undefined, opts: Intl.DateTimeFormatOptions) => {
+  const d = iso ? new Date(iso) : null
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleDateString("en-IN", opts) : ""
+}
+
+/** GET /ads/mine with live status, pause/resume, free resubmit after rejection, per-ad metrics. */
 export function AdvertiserDashboard() {
   const router = useRouter()
+  const { data: ads, isLoading, isError, refetch } = useGetMyAdsQuery()
+  const [expanded, setExpanded] = useState<string | null>(null)
 
-  const totalImpressions = myAds.reduce((s, a) => s + a.impressions, 0)
-  const totalClicks = myAds.reduce((s, a) => s + a.clicks, 0)
-  const totalSpend = myAds.filter(a => a.status === "Live" || a.status === "Completed" || a.status === "Paused").length * 18999
-  const liveAds = myAds.filter(a => a.status === "Live").length
+  const list = ads ?? []
+  const liveAds = list.filter((a) => a.status === "active").length
+  const inReview = list.filter((a) => a.status === "pending_review").length
+  const totalSpendPaise = list.filter((a) => PAID_STATUSES.has(a.status)).reduce((s, a) => s + (a.amountPaise ?? 0), 0)
 
   return (
     <div className="min-h-screen bg-brand-surface">
@@ -47,6 +75,9 @@ export function AdvertiserDashboard() {
             <ArrowLeft className="h-4 w-4" /> Back to dashboard
           </button>
           <div className="flex items-center gap-2">
+            <button onClick={() => router.push(ROUTES.reports)} className="border border-brand-border-light bg-card px-4 py-2 text-xs font-bold text-brand-secondary hover:bg-brand-surface">
+              Reports
+            </button>
             <button onClick={() => router.push(ROUTES.promote)} className="btn-gold relative overflow-hidden px-4 py-2 text-xs font-bold">
               <span className="relative z-10 flex items-center gap-1.5"><Plus className="h-3.5 w-3.5" /> New Ad</span>
             </button>
@@ -57,16 +88,16 @@ export function AdvertiserDashboard() {
       <div className="mx-auto max-w-7xl px-6 py-8">
         <div className="mb-6">
           <h1 className="font-serif text-3xl font-bold text-brand-secondary">Advertiser Dashboard</h1>
-          <p className="text-sm text-brand-secondary/65">Track ad status, clicks, impressions &amp; performance across all 5 ad types</p>
+          <p className="text-sm text-brand-secondary/65">Track ad status, impressions, clicks &amp; performance</p>
         </div>
 
         {/* KPI cards */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {[
-            { label: "Active Ads", value: liveAds, suffix: "", change: "+2 this week", icon: Megaphone },
-            { label: "Total Impressions", value: totalImpressions, separator: ",", change: "+12.4%", icon: Eye },
-            { label: "Total Clicks", value: totalClicks, separator: ",", change: "+8.1%", icon: MousePointerClick },
-            { label: "Total Spend", value: totalSpend, prefix: "₹ ", separator: ",", change: "This quarter", icon: Wallet },
+            { label: "Live Ads", value: liveAds, icon: Megaphone },
+            { label: "Under Review", value: inReview, icon: Clock },
+            { label: "Total Ads", value: list.length, icon: TrendingUp },
+            { label: "Total Spend", value: Math.round(totalSpendPaise / 100), prefix: "₹ ", separator: ",", icon: Wallet },
           ].map((kpi, i) => (
             <motion.div
               key={kpi.label}
@@ -75,14 +106,11 @@ export function AdvertiserDashboard() {
               transition={{ delay: i * 0.06 }}
               className="bg-card p-5 ring-1 ring-brand-border-light"
             >
-              <div className="flex items-center justify-between">
-                <div className="grid h-10 w-10 place-items-center bg-brand-surface">
-                  <kpi.icon className="h-5 w-5 text-brand-primary-dark" />
-                </div>
-                <span className="text-[10px] font-bold text-green-700">{kpi.change}</span>
+              <div className="grid h-10 w-10 place-items-center bg-brand-surface">
+                <kpi.icon className="h-5 w-5 text-brand-primary-dark" />
               </div>
               <div className="mt-3 font-serif text-3xl font-bold text-brand-secondary">
-                <AnimatedCounter to={kpi.value} prefix={kpi.prefix} suffix={kpi.suffix} separator={kpi.separator} duration={1.5} />
+                <AnimatedCounter to={kpi.value} prefix={kpi.prefix} separator={kpi.separator} duration={1.2} />
               </div>
               <div className="text-xs uppercase tracking-wide text-brand-secondary/55">{kpi.label}</div>
             </motion.div>
@@ -93,114 +121,53 @@ export function AdvertiserDashboard() {
         <div className="mt-6 bg-card p-6 ring-1 ring-brand-border-light">
           <div className="flex items-center justify-between">
             <h3 className="font-serif text-lg font-bold text-brand-secondary">All Advertisements</h3>
-            <span className="text-xs text-brand-secondary/55">{myAds.length} total</span>
+            <span className="text-xs text-brand-secondary/55">{list.length} total</span>
           </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-brand-surface">
-                <tr className="text-[10px] font-bold uppercase tracking-wide text-brand-secondary/55">
-                  <th className="px-4 py-3 text-left">Ad</th>
-                  <th className="px-4 py-3 text-left">Type</th>
-                  <th className="px-4 py-3 text-left">Package</th>
-                  <th className="px-4 py-3 text-right">Impr.</th>
-                  <th className="px-4 py-3 text-right">Clicks</th>
-                  <th className="px-4 py-3 text-right">CTR</th>
-                  <th className="px-4 py-3 text-left">Status</th>
-                  <th className="px-4 py-3 text-left">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand-border-light">
-                {myAds.map((ad) => {
-                  const Icon = adTypeIcons[ad.type] ?? Megaphone
-                  const style = statusStyles[ad.status]
-                  return (
-                    <Fragment key={ad.id}>
-                      <tr className="hover:bg-brand-surface/40">
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="grid h-8 w-8 place-items-center bg-gradient-to-br from-brand-primary to-brand-primary-dark">
-                              <Icon className="h-4 w-4 text-brand-secondary" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-brand-secondary">{ad.headline}</div>
-                              <div className="text-[10px] text-brand-secondary/55">{ad.id} · {ad.price}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-brand-secondary/65">{ad.type}</td>
-                        <td className="px-4 py-3 text-brand-secondary/65">{ad.package}</td>
-                        <td className="px-4 py-3 text-right font-bold text-brand-secondary">{ad.impressions.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-bold text-brand-secondary">{ad.clicks.toLocaleString()}</td>
-                        <td className="px-4 py-3 text-right font-bold text-brand-primary-dark">{ad.ctr}</td>
-                        <td className="px-4 py-3">
-                          <span className={"inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold " + style.bg + " " + style.text}>
-                            <span className={"h-1.5 w-1.5 rounded-full " + style.dot} />
-                            {ad.status}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex gap-1">
-                            {(ad.status === "Live" || ad.status === "Paused") && (
-                              <button className="grid h-7 w-7 place-items-center rounded bg-brand-surface text-brand-primary-dark hover:bg-gold-100" aria-label="Toggle pause">
-                                {ad.status === "Live" ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
-                              </button>
-                            )}
-                            {ad.status === "Rejected" && (
-                              <button
-                                onClick={() => router.push(ROUTES.promote)}
-                                className="rounded bg-ink-black px-2.5 py-1.5 text-[10px] font-bold text-brand-primary hover:bg-ink-deep"
-                              >
-                                Resubmit free
-                              </button>
-                            )}
-                            <button className="grid h-7 w-7 place-items-center rounded bg-brand-surface text-brand-primary-dark hover:bg-gold-100" aria-label="View report">
-                              <TrendingUp className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                      {ad.status === "Rejected" && ad.rejectionReason && (
-                        <tr>
-                          <td colSpan={8} className="bg-red-50/60 px-4 py-2.5 text-[11px] text-red-700">
-                            <b>Rejection reason:</b> {ad.rejectionReason} — resubmitting is free, no additional payment (same order).
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Ad types overview */}
-        <div className="mt-6 bg-card p-6 ring-1 ring-brand-border-light">
-          <h3 className="font-serif text-lg font-bold text-brand-secondary">Ad Types on VXP</h3>
-          <p className="text-xs text-brand-secondary/55">5 placement types — each managed by admin, available for self-service after account + payment</p>
-          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {[
-              { name: "Home Banner", icon: LayoutPanelTop, desc: "Home page top fold", example: "Lodha Elite Towers" },
-              { name: "City Advertisement", icon: MapPin, desc: "City search results", example: "Search → Thane" },
-              { name: "Featured Developer", icon: Building2, desc: "Developer profile", example: "Lodha · Runwal" },
-              { name: "Project Promotion", icon: Play, desc: "Video · Brochure · Tour", example: "Godrej Prana" },
-              { name: "Sponsored Properties", icon: Crown, desc: "Top of listings", example: "Priority boost" },
-            ].map((t) => (
-              <div key={t.name} className="border border-brand-border-light bg-brand-surface/40 p-4">
-                <t.icon className="h-5 w-5 text-brand-primary-dark" />
-                <div className="mt-2 text-xs font-bold text-brand-secondary">{t.name}</div>
-                <div className="text-[10px] text-brand-secondary/55">{t.desc}</div>
-                <div className="mt-1 text-[10px] italic text-brand-primary-dark">{t.example}</div>
-              </div>
-            ))}
-          </div>
+          {isLoading && <p className="mt-4 text-sm text-brand-secondary/55">Loading your ads…</p>}
+          {isError && (
+            <p className="mt-4 text-sm text-red-600">
+              Couldn&apos;t load your ads. <button onClick={() => refetch()} className="font-bold underline">Retry</button>
+            </p>
+          )}
+          {!isLoading && !isError && list.length === 0 && (
+            <div className="mt-4 border border-dashed border-brand-border p-8 text-center text-sm text-brand-secondary/55">
+              No ads yet — start one to reach buyers across VXP.
+            </div>
+          )}
+          {list.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-brand-surface">
+                  <tr className="text-[10px] font-bold uppercase tracking-wide text-brand-secondary/55">
+                    <th className="px-4 py-3 text-left">Ad</th>
+                    <th className="px-4 py-3 text-left">Price</th>
+                    <th className="px-4 py-3 text-right">Impr.</th>
+                    <th className="px-4 py-3 text-right">Clicks</th>
+                    <th className="px-4 py-3 text-right">CTR</th>
+                    <th className="px-4 py-3 text-left">Status</th>
+                    <th className="px-4 py-3 text-left">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand-border-light">
+                  {list.map((ad) => (
+                    <AdRow
+                      key={ad._id}
+                      ad={ad}
+                      expanded={expanded === ad._id}
+                      onToggle={() => setExpanded(expanded === ad._id ? null : ad._id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* CTA */}
         <div className="mt-6 flex items-center justify-between bg-gradient-to-br from-ink-black to-ink-deep p-6 text-white">
           <div>
             <h3 className="font-serif text-lg font-bold">Ready to launch a new ad?</h3>
-            <p className="text-xs text-white/65">Pick a type, pay, upload creative — goes live after admin approval (typically 24h)</p>
+            <p className="text-xs text-white/65">Pick a type and package, pay — it goes live after admin approval</p>
           </div>
           <button onClick={() => router.push(ROUTES.promote)} className="btn-gold relative overflow-hidden px-5 py-3 text-sm font-bold">
             <span className="relative z-10 flex items-center gap-2">Start new ad <ArrowUpRight className="h-4 w-4" /></span>
@@ -208,5 +175,145 @@ export function AdvertiserDashboard() {
         </div>
       </div>
     </div>
+  )
+}
+
+function AdRow({ ad, expanded, onToggle }: { ad: Ad; expanded: boolean; onToggle: () => void }) {
+  const Icon = productIcons[ad.product] ?? Megaphone
+  const style = AD_STATUS_STYLE[ad.status] ?? AD_STATUS_STYLE.draft
+  // Impressions/clicks are only counted once an ad is served — skip drafts.
+  const { data: metrics } = useGetAdMetricsQuery({ id: ad._id }, { skip: ad.status === "draft" })
+  const [pauseAd, { isLoading: pausing }] = usePauseAdMutation()
+  const [resumeAd, { isLoading: resuming }] = useResumeAdMutation()
+  const [resubmitAd, { isLoading: resubmitting }] = useResubmitAdMutation()
+  const [error, setError] = useState<string | null>(null)
+  const router = useRouter()
+  // An ad stays "draft" until its payment captures, so a paid-but-confirming
+  // ad would otherwise look unpaid here. Remembered by the checkout on this device.
+  const pendingOrder = usePendingOrder(ad.status === "draft" ? adPendingKey(ad._id) : undefined)
+  const created = formatDate(ad.createdAt, { day: "numeric", month: "short" })
+  const subtitle = [ad.targetCity ?? (ad.product === "banner" ? "All of India" : ""), created ? `created ${created}` : ""]
+    .filter(Boolean)
+    .join(" · ")
+
+  const run = async (action: () => Promise<unknown>) => {
+    setError(null)
+    try {
+      await action()
+    } catch (err) {
+      setError(getApiErrorMessage(err) ?? "That didn't work. Please try again.")
+    }
+  }
+
+  return (
+    <Fragment>
+      <tr className="hover:bg-brand-surface/40">
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-2">
+            <div className="grid h-8 w-8 place-items-center bg-gradient-to-br from-brand-primary to-brand-primary-dark">
+              <Icon className="h-4 w-4 text-brand-secondary" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-brand-secondary">{AD_PRODUCT_LABEL[ad.product] ?? ad.product}</div>
+              <div className="text-[10px] text-brand-secondary/55">{subtitle}</div>
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-3 text-brand-secondary/65">{ad.amountPaise ? formatPaise(ad.amountPaise) : "—"}</td>
+        <td className="px-4 py-3 text-right font-bold text-brand-secondary">{metrics ? metrics.totals.impressions.toLocaleString("en-IN") : "—"}</td>
+        <td className="px-4 py-3 text-right font-bold text-brand-secondary">{metrics ? metrics.totals.clicks.toLocaleString("en-IN") : "—"}</td>
+        <td className="px-4 py-3 text-right font-bold text-brand-primary-dark">{metrics ? formatCtr(metrics.totals.ctr) : "—"}</td>
+        <td className="px-4 py-3">
+          <span className={"inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold " + style.bg + " " + style.text}>
+            <span className={"h-1.5 w-1.5 rounded-full " + style.dot} />
+            {pendingOrder ? "Payment confirming" : style.label}
+          </span>
+        </td>
+        <td className="px-4 py-3">
+          <div className="flex items-center gap-1">
+            {ad.status === "active" && (
+              <button
+                onClick={() => run(() => pauseAd(ad._id).unwrap())}
+                disabled={pausing}
+                className="grid h-7 w-7 disabled:opacity-40 place-items-center rounded bg-brand-surface text-brand-primary-dark hover:bg-gold-100"
+                aria-label="Pause ad"
+                title="Pause ad"
+              >
+                <Pause className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {ad.status === "paused" && (
+              <button
+                onClick={() => run(() => resumeAd(ad._id).unwrap())}
+                disabled={resuming}
+                className="grid h-7 w-7 disabled:opacity-40 place-items-center rounded bg-brand-surface text-brand-primary-dark hover:bg-gold-100"
+                aria-label="Resume ad"
+                title="Resume ad"
+              >
+                <Play className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {ad.status === "rejected" && (
+              <button
+                onClick={() => run(() => resubmitAd({ id: ad._id }).unwrap())}
+                disabled={resubmitting}
+                className="whitespace-nowrap rounded bg-ink-black disabled:opacity-40 px-2.5 py-1.5 text-[10px] font-bold text-brand-primary hover:bg-ink-deep"
+              >
+                {resubmitting ? "Resubmitting…" : "Resubmit free"}
+              </button>
+            )}
+            {ad.status === "draft" && (
+              <button
+                onClick={() => router.push(`${ROUTES.promote}?ad=${ad._id}`)}
+                className="whitespace-nowrap rounded bg-ink-black px-2.5 py-1.5 text-[10px] font-bold text-brand-primary hover:bg-ink-deep"
+              >
+                {pendingOrder ? "Check payment" : "Continue"}
+              </button>
+            )}
+            {ad.status !== "draft" && (
+              <button
+                onClick={onToggle}
+                className="grid h-7 w-7 place-items-center rounded bg-brand-surface text-brand-primary-dark hover:bg-gold-100"
+                aria-label="View daily metrics"
+                title="View daily metrics"
+              >
+                <TrendingUp className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </td>
+      </tr>
+      {ad.status === "draft" && (
+        <tr>
+          <td colSpan={7} className="bg-brand-surface/50 px-4 py-2 text-[11px] text-brand-secondary/60">
+            {pendingOrder
+              ? "Payment is being confirmed — the ad goes to review once it is. Don't pay again."
+              : "Unpaid draft — continue to finish checkout."}
+          </td>
+        </tr>
+      )}
+      {ad.status === "rejected" && ad.rejectionReason && (
+        <tr>
+          <td colSpan={7} className="bg-red-50/60 px-4 py-2.5 text-[11px] text-red-700">
+            <b>Rejection reason:</b> {ad.rejectionReason} — resubmitting is free, no additional payment. Fix the
+            issue first: resubmitting sends the same ad back to review.
+          </td>
+        </tr>
+      )}
+      {error && (
+        <tr>
+          <td colSpan={7} className="px-4 py-2 text-[11px] font-semibold text-red-600">
+            <AlertCircle className="mr-1 inline h-3 w-3" /> {error}
+          </td>
+        </tr>
+      )}
+      {expanded && (
+        <tr>
+          <td colSpan={7} className="bg-brand-surface/40 px-4 py-4">
+            <AdMetricsPanel adId={ad._id} />
+          </td>
+        </tr>
+      )}
+    </Fragment>
   )
 }

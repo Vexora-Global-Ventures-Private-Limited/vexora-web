@@ -48,17 +48,17 @@ export function useSessionGuard(predicate: (user: User | null) => boolean, redir
  * on that exact change and yank the visitor off to `redirectTo` immediately,
  * skipping the success screen entirely.
  */
-export function useGuestGuard(redirectTo: string) {
+export function useGuestGuard(redirectTo: string, { enabled = true }: { enabled?: boolean } = {}) {
   const router = useRouter()
   const hasHydrated = useNav((s) => s.hasHydrated)
   const ready = useNav.persist ? hasHydrated : true
   const checked = useRef(false)
 
   useEffect(() => {
-    if (!ready || checked.current) return
+    if (!enabled || !ready || checked.current) return
     checked.current = true
     if (useNav.getState().user) router.replace(redirectTo)
-  }, [ready, redirectTo, router])
+  }, [enabled, ready, redirectTo, router])
 
   return { ready }
 }

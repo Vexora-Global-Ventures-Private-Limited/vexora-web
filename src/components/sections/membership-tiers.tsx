@@ -2,9 +2,11 @@
 
 import { motion } from "framer-motion"
 import { Check, Crown, Briefcase, Building2, Sparkles, ArrowUpRight } from "lucide-react"
-import { membershipTiers, type MembershipTier } from "@/lib/vxp-data"
+import { useRouter } from "next/navigation"
 import { Reveal } from "@/components/motion/reveal"
 import { SectionHeading } from "@/components/sections/section-heading"
+import { useLiveTiers, type LiveTier } from "@/components/billing/live-tiers"
+import { ROUTES } from "@/lib/routes"
 
 const tierIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   M: Crown,
@@ -13,6 +15,8 @@ const tierIcons: Record<string, React.ComponentType<{ className?: string }>> = {
 }
 
 export function MembershipTiers() {
+  // Live price/duration/quota from GET /membership-plans over the static copy.
+  const { tiers } = useLiveTiers()
   return (
     <section id="membership" className="paper-texture section-home">
       <div className="mx-auto max-w-7xl px-6">
@@ -30,7 +34,7 @@ export function MembershipTiers() {
           variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.15 } } }}
           className="mt-14 grid grid-cols-1 gap-6 lg:grid-cols-3"
         >
-          {membershipTiers.map((tier) => (
+          {tiers.map((tier) => (
             <TierCard key={tier.code} tier={tier} />
           ))}
         </motion.div>
@@ -49,7 +53,8 @@ export function MembershipTiers() {
   )
 }
 
-function TierCard({ tier }: { tier: MembershipTier }) {
+function TierCard({ tier }: { tier: LiveTier }) {
+  const router = useRouter()
   const Icon = tierIcons[tier.code] ?? Crown
   const popular = tier.popular
 
@@ -108,7 +113,7 @@ function TierCard({ tier }: { tier: MembershipTier }) {
             {tier.price}
           </span>
           <span className={"mb-1.5 text-sm " + (popular ? "text-white/60" : "text-brand-secondary/55")}>
-            / {tier.duration}
+            {tier.unavailable ? "" : `/ ${tier.duration}`}
           </span>
         </div>
 
@@ -128,7 +133,7 @@ function TierCard({ tier }: { tier: MembershipTier }) {
         {/* Listings */}
         <div className={"mt-5 flex items-baseline gap-2 border-y py-3 " + (popular ? "border-white/15" : "border-brand-border-light")}>
           <span className={"font-serif text-3xl font-bold " + (popular ? "text-brand-primary" : "text-brand-primary-dark")}>
-            {tier.listings}
+            {tier.unavailable ? "—" : tier.listings}
           </span>
           <span className={"text-sm " + (popular ? "text-white/70" : "text-brand-secondary/70")}>
             listings included
@@ -157,6 +162,7 @@ function TierCard({ tier }: { tier: MembershipTier }) {
       <motion.button
         whileHover={{ scale: 1.02 }}
         whileTap={{ scale: 0.98 }}
+        onClick={() => router.push(ROUTES.membership)}
         className={
           "mt-8 inline-flex items-center justify-center gap-2 py-3.5 text-sm font-bold transition-all " +
           (popular

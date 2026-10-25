@@ -1,7 +1,7 @@
 "use client"
 
 import { ArrowLeft, ArrowUpRight, type LucideIcon } from "lucide-react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { ROUTES } from "@/lib/routes"
 import { useNav } from "@/lib/nav-store"
 import { UserNavMenu } from "@/components/site/user-nav-menu"
@@ -16,12 +16,13 @@ type ComingSoonPageProps = {
 
 /**
  * Shared placeholder for nav destinations that exist as real links in the
- * header today but don't have a built-out experience yet (Commercial, Land &
- * Luxury Villa, Global Properties, Smart Pool, Rent & Earn). Keeps every new
- * nav item clickable and on-brand while each gets built out as its own pass.
+ * header today but don't have a built-out experience yet (Smart Pool,
+ * Rent & Earn). Keeps every nav item clickable and on-brand until each gets
+ * built out as its own pass.
  */
 export function ComingSoonPage({ icon: Icon, title, audience, description }: ComingSoonPageProps) {
   const router = useRouter()
+  const pathname = usePathname() ?? ROUTES.home
   const user = useNav((s) => s.user)
 
   return (
@@ -44,12 +45,13 @@ export function ComingSoonPage({ icon: Icon, title, audience, description }: Com
               <p className="text-xs text-brand-secondary/55">{audience}</p>
             </div>
           </div>
+          {/* Visible on every screen size — this header is the page's only way in or out of a session. */}
           {user ? (
-            <UserNavMenu user={user} className="hidden text-brand-secondary sm:flex" />
+            <UserNavMenu user={user} className="flex text-brand-secondary" />
           ) : (
             <button
-              onClick={() => router.push(ROUTES.login)}
-              className="hidden border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface sm:block"
+              onClick={() => router.push(ROUTES.loginWithReturn(pathname))}
+              className="shrink-0 border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface"
             >
               Log in
             </button>

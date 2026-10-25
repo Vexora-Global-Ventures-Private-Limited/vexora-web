@@ -64,6 +64,10 @@ export const metadata: Metadata = {
     "broker platform",
   ],
   authors: [{ name: "VXP" }],
+  // The site ships its own light/dark theme. Without this, the Dark Reader
+  // extension rewrites inline styles before React hydrates and every page
+  // logs a hydration-mismatch error in dev.
+  other: { "darkreader-lock": "true" },
   openGraph: {
     title: "VXP — India's Elite Real Estate Marketplace",
     description: "Verified luxury listings, sponsored placements, and CRM-powered lead management for India's elite.",

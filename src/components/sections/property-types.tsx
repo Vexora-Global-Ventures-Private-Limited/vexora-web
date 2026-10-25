@@ -2,8 +2,9 @@
 
 import { ArrowUpRight } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { propertyTypes, LIVING_CATEGORY_FILTER } from "@/lib/vxp-data"
+import { propertyTypes } from "@/lib/vxp-data"
 import { ROUTES } from "@/lib/routes"
+import { useSearchQuery } from "@/store/api/searchApi"
 import { Reveal } from "@/components/motion/reveal"
 import { MaskReveal } from "@/components/motion/text-reveal"
 
@@ -16,12 +17,8 @@ export function PropertyTypes() {
   const rows = propertyTypes
 
   const goToCategory = (name: string) => {
-    const mapped = LIVING_CATEGORY_FILTER[name] ?? {}
-    const params = new URLSearchParams()
-    if (mapped.type) params.set("propertyType", mapped.type)
-    if (mapped.status) params.set("status", mapped.status)
-    const qs = params.toString()
-    router.push(qs ? `${ROUTES.properties}?${qs}` : ROUTES.properties)
+    const target = CATEGORY_TARGET[name]
+    router.push(target?.href ?? (target?.type ? ROUTES.propertiesSearch({ propertyType: target.type }) : ROUTES.properties))
   }
 
   return (
@@ -66,7 +63,8 @@ export function PropertyTypes() {
                       {pt.name}
                     </span>
                     <span className="mt-1.5 block text-sm text-brand-secondary/55">
-                      {pt.desc} · <span className="font-medium text-brand-secondary/70">{pt.count}</span>
+                      {pt.desc}
+                      <CategoryCount type={CATEGORY_TARGET[pt.name]?.type} />
                     </span>
                   </span>
                   <span className="flex h-11 w-11 items-center justify-center self-center rounded-full border border-brand-secondary/15 text-brand-secondary/50 transition-all duration-400 group-hover:border-brand-primary group-hover:bg-brand-primary group-hover:text-ink-black">
@@ -80,5 +78,32 @@ export function PropertyTypes() {
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * Where each "way of living" row lands. Rows backed by a real API property
+ * type link to that filter and show its live listing count; "Rent" has no
+ * search filter on the backend (purpose isn't filterable) and "New Projects"
+ * is the developer project inventory, so those just link through.
+ */
+const CATEGORY_TARGET: Record<string, { type?: string; href?: string }> = {
+  "Luxury Flats": { type: "apartment" },
+  Farmhouse: { type: "villa" },
+  "Land / Plot": { type: "plot" },
+  Rent: {},
+  "New Projects": { href: ROUTES.projects },
+}
+
+function CategoryCount({ type }: { type?: string }) {
+  const { data } = useSearchQuery({ property_type: type, limit: 1 }, { skip: !type })
+  if (!type || !data) return null
+  return (
+    <>
+      {" · "}
+      <span className="font-medium text-brand-secondary/70">
+        {data.total.toLocaleString("en-IN")} listing{data.total === 1 ? "" : "s"}
+      </span>
+    </>
   )
 }
