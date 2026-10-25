@@ -25,13 +25,12 @@ export function FilmGrain() {
     let raf = 0
     let last = 0
     const SIZE = 180 // small noise texture, scaled up via CSS
-
-    const resize = () => {
-      canvas.width = SIZE
-      canvas.height = SIZE
-    }
-    resize()
-    window.addEventListener("resize", resize)
+    canvas.width = SIZE
+    canvas.height = SIZE
+    // One buffer, refilled each frame — allocating a fresh ImageData 24
+    // times a second just fed the garbage collector.
+    const img = ctx.createImageData(SIZE, SIZE)
+    const data = img.data
 
     const render = (time: number) => {
       raf = requestAnimationFrame(render)
@@ -39,8 +38,6 @@ export function FilmGrain() {
       if (time - last < 42) return
       last = time
 
-      const img = ctx.createImageData(SIZE, SIZE)
-      const data = img.data
       for (let i = 0; i < data.length; i += 4) {
         const v = (Math.random() * 255) | 0
         data[i] = v
@@ -52,10 +49,7 @@ export function FilmGrain() {
     }
     raf = requestAnimationFrame(render)
 
-    return () => {
-      cancelAnimationFrame(raf)
-      window.removeEventListener("resize", resize)
-    }
+    return () => cancelAnimationFrame(raf)
   }, [])
 
   return (

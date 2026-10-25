@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -9,112 +9,189 @@ import {
 } from "lucide-react"
 import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
-import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { describeAuthError, getApiErrorCode, safeReturnTo } from "@/lib/api-error"
+import { isValidEmail, isValidIndianMobile } from "@/lib/profile-options"
+import { useNav } from "@/lib/nav-store"
+import { useLazyGetProfileQuery, missingProfileFields } from "@/store/api/usersApi"
 import { GoogleIcon } from "@/components/icons/google-icon"
+import { OtpCodeInput, emptyOtp, formatCountdown } from "@/components/site/otp-code-input"
 import { useGuestGuard } from "@/lib/use-session-guard"
 import type { OtpChannel } from "@/store/api/authApi"
 
-const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-
 type AuthMethod = "select" | "google-loading" | "mobile" | "email" | "otp"
+
+const RESEND_COOLDOWN_S = 30
+
+/** Why the visitor was sent here (set by baseApi when a session dies). */
+const REASON_MESSAGE: Record<string, string> = {
+  expired: "Your session has ended. Please sign in again.",
+  suspended: "This account has been suspended. Contact support if you think this is a mistake.",
+}
 
 export function LoginPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  // Only ever follow an internal, relative path here -- a raw external URL in
-  // ?returnTo would turn this into an open redirect.
-  const returnToParam = searchParams.get("returnTo")
-  const returnTo = returnToParam && returnToParam.startsWith("/") ? returnToParam : null
+  // Only ever follow a same-site path — see safeReturnTo.
+  const returnTo = safeReturnTo(searchParams.get("returnTo"))
   const destination = returnTo || ROUTES.dashboard
   useGuestGuard(destination)
-  const [method, setMethod] = useState<AuthMethod>("select")
-  const [phone, setPhone] = useState("")
-  const [email, setEmail] = useState("")
+  // ?mobile= / ?email= prefill — set by signup's "log in instead" link.
+  const prefillMobile = (searchParams.get("mobile") ?? "").replace(/\D/g, "").slice(0, 10)
+  const prefillEmail = searchParams.get("email") ?? ""
+  const [method, setMethod] = useState<AuthMethod>(prefillMobile ? "mobile" : prefillEmail ? "email" : "select")
+  const [phone, setPhone] = useState(prefillMobile)
+  const [email, setEmail] = useState(prefillEmail)
   const [channel, setChannel] = useState<OtpChannel>("mobile")
-  // Backend OTPs are 6 digits (api.json: "6-digit OTP code", e.g. "111111").
-  const [otp, setOtp] = useState(["", "", "", "", "", ""])
+  const [otp, setOtp] = useState(emptyOtp)
   const [submitted, setSubmitted] = useState(false)
+  const [nextHref, setNextHref] = useState(destination)
   const [otpId, setOtpId] = useState<string | null>(null)
-  const [formError, setFormError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<string | null>(() => REASON_MESSAGE[searchParams.get("reason") ?? ""] ?? null)
+  // Login attempt for a number/email with no account — offer signup instead of a dead end.
+  const [notRegistered, setNotRegistered] = useState(false)
+  // The current code can't succeed any more (expired / used / too many tries).
+  const [codeLocked, setCodeLocked] = useState(false)
   const [resendCooldown, setResendCooldown] = useState(0)
+  const [expiresIn, setExpiresIn] = useState(0)
+  const verifying = useRef(false)
 
   const {
     requestOtp, resendOtp, verifyOtp,
-    isRequestingOtp, isVerifyingOtp,
+    isRequestingOtp, isResendingOtp, isVerifyingOtp,
   } = useAuth()
+  const [fetchProfile] = useLazyGetProfileQuery()
 
-  const otpDestination = channel === "mobile" ? `+91${phone}` : email
+  const trimmedEmail = email.trim()
+  const otpDestination = channel === "mobile" ? `+91${phone}` : trimmedEmail
+  const phoneValid = isValidIndianMobile(phone)
+  const emailValid = isValidEmail(trimmedEmail)
 
-  // Auto-continue to the destination shortly after a successful sign-in --
-  // back to whatever gated page sent the visitor here, or the dashboard by default.
+  // Auto-continue shortly after a successful sign-in.
   useEffect(() => {
     if (!submitted) return
-    const t = setTimeout(() => router.push(destination), 1400)
+    const t = setTimeout(() => router.push(nextHref), 1400)
     return () => clearTimeout(t)
-  }, [submitted, router, destination])
+  }, [submitted, router, nextHref])
 
-  // Ticks resendCooldown down to 0 once a second while the OTP screen is up.
-  // One interval for the whole visit to this screen (not recreated every
-  // tick) — the functional update form means it doesn't need resendCooldown
-  // itself as a dependency, and naturally stays at 0 once it gets there.
+  // One ticking interval while the OTP screen is up: resend cooldown and the
+  // code's own 5-minute expiry (from expiresInSeconds) count down together.
   useEffect(() => {
     if (method !== "otp") return
-    const t = setInterval(() => setResendCooldown((s) => Math.max(0, s - 1)), 1000)
+    const t = setInterval(() => {
+      setResendCooldown((s) => Math.max(0, s - 1))
+      setExpiresIn((s) => Math.max(0, s - 1))
+    }, 1000)
     return () => clearInterval(t)
   }, [method])
 
+  const startOtp = (result: { data: { otpId: string; expiresInSeconds: number } }, ch: OtpChannel) => {
+    setOtpId(result.data.otpId)
+    setOtp(emptyOtp())
+    setChannel(ch)
+    setCodeLocked(false)
+    setExpiresIn(result.data.expiresInSeconds)
+    setResendCooldown(RESEND_COOLDOWN_S)
+    setMethod("otp")
+  }
+
+  const handleRequestError = (error: unknown, fallback: string) => {
+    if (getApiErrorCode(error) === "NOT_REGISTERED") {
+      setNotRegistered(true)
+      setFormError(null)
+      return
+    }
+    setFormError(describeAuthError(error, fallback).message)
+  }
+
   const handleSendMobileOtp = async () => {
-    if (phone.length !== 10) return
+    if (!phoneValid || isRequestingOtp) return
     setFormError(null)
+    setNotRegistered(false)
     try {
-      const result = await requestOtp(`+91${phone}`, "mobile", "login")
-      setOtpId(result.data.otpId)
-      setOtp(["", "", "", "", "", ""])
-      setChannel("mobile")
-      setMethod("otp")
-      setResendCooldown(30)
+      startOtp(await requestOtp(`+91${phone}`, "mobile", "login"), "mobile")
     } catch (error) {
-      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the number and try again.")
+      handleRequestError(error, "Couldn't send the OTP. Please check the number and try again.")
     }
   }
 
   const handleSendEmailOtp = async () => {
-    if (!isValidEmail(email)) return
+    if (!emailValid || isRequestingOtp) return
     setFormError(null)
+    setNotRegistered(false)
     try {
-      const result = await requestOtp(email, "email", "login")
-      setOtpId(result.data.otpId)
-      setOtp(["", "", "", "", "", ""])
-      setChannel("email")
-      setMethod("otp")
-      setResendCooldown(30)
+      startOtp(await requestOtp(trimmedEmail, "email", "login"), "email")
     } catch (error) {
-      setFormError(getApiErrorMessage(error) ?? "Couldn't send the OTP. Please check the address and try again.")
+      handleRequestError(error, "Couldn't send the OTP. Please check the address and try again.")
     }
   }
 
   const handleResendOtp = async () => {
-    if (resendCooldown > 0) return
+    if (resendCooldown > 0 || isResendingOtp) return
     setFormError(null)
     try {
-      const result = await resendOtp(otpDestination, channel, "login")
-      setOtpId(result.data.otpId)
-      setResendCooldown(30)
+      // Always verify against the newest otpId — a resend invalidates the old one.
+      startOtp(await resendOtp(otpDestination, channel, "login"), channel)
     } catch (error) {
-      setFormError(getApiErrorMessage(error) ?? "Couldn't resend the OTP. Please try again.")
+      setFormError(describeAuthError(error, "Couldn't resend the OTP. Please try again.").message)
     }
   }
 
-  const handleOtpSubmit = async () => {
-    if (!otpId || !otp.every((d) => d)) return
+  /**
+   * Where to go after signing in. An account whose profile isn't complete
+   * (profile-options rules) finishes it first — then continues to wherever
+   * it was headed. A failed check never blocks sign-in.
+   */
+  const resolveNextHref = async () => {
+    const user = useNav.getState().user
+    const profile = await fetchProfile(undefined, false).unwrap().catch(() => null)
+    if (profile && user && missingProfileFields(profile, { phone: user.phone, email: user.email }).length > 0) {
+      return `${ROUTES.signup}?${new URLSearchParams({ step: "profile", returnTo: destination })}`
+    }
+    return destination
+  }
+
+  const finishSignIn = async () => {
+    setNextHref(await resolveNextHref())
+    setSubmitted(true)
+  }
+
+  const handleOtpSubmit = async (code = otp.join("")) => {
+    // A ref, not state: auto-submit on the 6th digit and a tap on the button
+    // can land in the same tick — a second verify of the same code would
+    // fail with OTP_CONSUMED.
+    if (!otpId || code.length !== 6 || codeLocked || verifying.current) return
+    verifying.current = true
     setFormError(null)
     try {
-      await verifyOtp(otpId, otp.join(""))
-      setSubmitted(true)
+      await verifyOtp(otpId, code)
+      await finishSignIn()
     } catch (error) {
-      setFormError(getApiErrorMessage(error) ?? "That code didn't match. Please try again.")
+      const { message, lockCode } = describeAuthError(error, "That code didn't match. Please try again.")
+      setFormError(message)
+      setOtp(emptyOtp())
+      if (lockCode) setCodeLocked(true)
+    } finally {
+      verifying.current = false
     }
   }
+
+  const signupHref = () => {
+    const params = new URLSearchParams()
+    if (returnTo) params.set("returnTo", returnTo)
+    if (method === "mobile" && phone) params.set("mobile", phone)
+    if (method === "email" && trimmedEmail) params.set("email", trimmedEmail)
+    const qs = params.toString()
+    return qs ? `${ROUTES.signup}?${qs}` : ROUTES.signup
+  }
+
+  const notRegisteredNotice = notRegistered && (
+    <div className="mt-3 border border-brand-primary/40 bg-brand-primary/10 px-3 py-2 text-xs text-brand-secondary" role="status">
+      No VXP account uses this {method === "email" ? "email" : "number"} yet.{" "}
+      <button onClick={() => router.push(signupHref())} className="font-bold text-brand-primary-dark underline">
+        Sign up instead →
+      </button>
+    </div>
+  )
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-ink-black">
@@ -199,17 +276,21 @@ export function LoginPage() {
                   className="bg-card p-8 text-center shadow-2xl shadow-brand-primary-dark/10"
                 >
                   <CheckCircle2 className="mx-auto h-12 w-12 text-brand-primary-dark" />
-                  <h2 className="mt-4 font-serif text-2xl font-bold text-brand-secondary">Sign-in received</h2>
+                  <h2 className="mt-4 font-serif text-2xl font-bold text-brand-secondary">You&apos;re signed in</h2>
                   <p className="mt-2 text-sm text-brand-secondary/65">
-                    Your credentials were submitted successfully. {returnTo ? "Taking you back to continue…" : "Taking you to your dashboard…"}
+                    {nextHref !== destination
+                      ? "One more step — let's finish your profile…"
+                      : returnTo
+                        ? "Taking you back to continue…"
+                        : "Taking you to your dashboard…"}
                   </p>
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={() => router.push(destination)}
+                    onClick={() => router.push(nextHref)}
                     className="btn-gold mt-6 w-full overflow-hidden py-3.5 text-sm font-bold"
                   >
-                    <span className="relative z-10">{returnTo ? "Continue →" : "Go to dashboard →"}</span>
+                    <span className="relative z-10">{returnTo || nextHref !== destination ? "Continue →" : "Go to dashboard →"}</span>
                   </motion.button>
                 </motion.div>
               )}
@@ -235,19 +316,20 @@ export function LoginPage() {
                   <div className="mt-8 space-y-3">
                     <GoogleSignInButton
                       mode="login"
-                      onSuccess={() => setSubmitted(true)}
+                      onSuccess={() => {
+                        void finishSignIn()
+                      }}
                       onError={(error) => {
                         // PARTNER-AUTH-INTEGRATION.md §2 — mode:"login" 404s as
                         // NOT_REGISTERED when the Google email has no VXP
                         // account yet. The "New to VXP? Create an account"
-                        // link is already right below this button, so the
-                        // message alone is enough to point them at it.
-                        const code = getApiErrorCode(error)
+                        // link is right below this button.
                         const message =
-                          code === "NOT_REGISTERED"
+                          getApiErrorCode(error) === "NOT_REGISTERED"
                             ? "No account found for that Google account — please sign up below."
-                            : getApiErrorMessage(error) ??
-                              (error instanceof Error ? error.message : "Google sign-in failed. Please try again.")
+                            : error instanceof Error && !getApiErrorCode(error)
+                              ? error.message
+                              : describeAuthError(error, "Google sign-in failed. Please try again.").message
                         setFormError(message)
                         setMethod("select")
                       }}
@@ -273,7 +355,11 @@ export function LoginPage() {
                     <motion.button
                       whileHover={{ scale: 1.02, y: -2 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={() => setMethod("mobile")}
+                      onClick={() => {
+                        setFormError(null)
+                        setNotRegistered(false)
+                        setMethod("mobile")
+                      }}
                       className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
                     >
                       <Phone className="h-4 w-4 text-brand-primary-dark" /> Mobile + OTP
@@ -281,7 +367,11 @@ export function LoginPage() {
                     <motion.button
                       whileHover={{ scale: 1.02, y: -2 }}
                       whileTap={{ scale: 0.98 }}
-                      onClick={() => setMethod("email")}
+                      onClick={() => {
+                        setFormError(null)
+                        setNotRegistered(false)
+                        setMethod("email")
+                      }}
                       className="flex w-full items-center justify-center gap-3 border border-brand-border-light bg-card py-3.5 text-sm font-bold text-brand-secondary transition-colors hover:border-brand-primary-dark hover:bg-brand-surface"
                     >
                       <Mail className="h-4 w-4 text-brand-primary-dark" /> Continue with Email
@@ -345,25 +435,8 @@ export function LoginPage() {
                       transition={{ delay: 0.4 }}
                       className="mt-2 text-sm text-brand-secondary/60"
                     >
-                      Authenticating your account securely…
+                      Finish signing in in the Google window…
                     </motion.p>
-                    <div className="mt-8 w-full space-y-2 text-left">
-                      {[
-                        { label: "Requesting Google sign-in", delay: 0 },
-                        { label: "Verifying credentials", delay: 600 },
-                        { label: "Loading your VXP profile", delay: 1200 },
-                      ].map((s, i) => (
-                        <motion.div
-                          key={i}
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: 0.5 + s.delay / 1000 }}
-                          className="flex items-center gap-2 text-xs text-brand-secondary/70"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5 text-brand-primary-dark" /> {s.label}
-                        </motion.div>
-                      ))}
-                    </div>
                   </div>
                 </motion.div>
               )}
@@ -387,36 +460,56 @@ export function LoginPage() {
                   <p className="mt-2 text-sm text-brand-secondary/60">
                     Enter your mobile number — we&apos;ll send a 6-digit OTP.
                   </p>
-                  <div className="mt-6">
-                    <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
-                      Mobile number
-                    </label>
-                    <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                      <span className="text-sm font-semibold text-brand-secondary/70">+91</span>
-                      <span className="h-5 w-px bg-brand-border-light" />
-                      <input
-                        type="tel"
-                        value={phone}
-                        onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
-                        placeholder="98765 43210"
-                        className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
-                      />
-                    </div>
-                  </div>
-                  {formError && (
-                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
-                  )}
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleSendMobileOtp}
-                    disabled={phone.length !== 10 || isRequestingOtp}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      void handleSendMobileOtp()
+                    }}
+                    noValidate
                   >
-                    <span className="relative z-10 flex items-center gap-2">
-                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
-                    </span>
-                  </motion.button>
+                    <div className="mt-6">
+                      <label htmlFor="login-mobile" className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
+                        Mobile number
+                      </label>
+                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
+                        <span className="text-sm font-semibold text-brand-secondary/70">+91</span>
+                        <span className="h-5 w-px bg-brand-border-light" />
+                        <input
+                          id="login-mobile"
+                          type="tel"
+                          inputMode="numeric"
+                          autoComplete="tel-national"
+                          autoFocus
+                          value={phone}
+                          onChange={(e) => {
+                            setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))
+                            setNotRegistered(false)
+                          }}
+                          aria-invalid={phone.length === 10 && !phoneValid}
+                          placeholder="98765 43210"
+                          className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+                        />
+                      </div>
+                      {phone.length === 10 && !phoneValid && (
+                        <p className="mt-1 text-[11px] text-red-500">Indian mobile numbers start with 6, 7, 8 or 9.</p>
+                      )}
+                    </div>
+                    {notRegisteredNotice}
+                    {formError && (
+                      <p className="mt-3 text-xs font-semibold text-red-500" role="alert">{formError}</p>
+                    )}
+                    <motion.button
+                      type="submit"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      disabled={!phoneValid || isRequestingOtp}
+                      className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
+                    >
+                      <span className="relative z-10 flex items-center gap-2">
+                        {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
+                      </span>
+                    </motion.button>
+                  </form>
                 </motion.div>
               )}
 
@@ -430,7 +523,10 @@ export function LoginPage() {
                   className="bg-card p-8 shadow-2xl shadow-brand-primary-dark/10"
                 >
                   <button
-                    onClick={() => setMethod(channel)}
+                    onClick={() => {
+                      setFormError(null)
+                      setMethod(channel)
+                    }}
                     className="mb-4 flex items-center gap-2 text-xs font-semibold text-brand-secondary/55 hover:text-brand-secondary"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" /> {channel === "mobile" ? "Change number" : "Change email"}
@@ -439,49 +535,48 @@ export function LoginPage() {
                   <p className="mt-2 text-sm text-brand-secondary/60">
                     Enter the 6-digit code sent to{" "}
                     <span className="font-bold text-brand-secondary">
-                      {channel === "mobile" ? `+91 ${phone || "98765 43210"}` : email}
+                      {channel === "mobile" ? `+91 ${phone}` : trimmedEmail}
                     </span>
                   </p>
-                  <div className="mt-6 flex justify-center gap-2">
-                    {otp.map((digit, i) => (
-                      <input
-                        key={i}
-                        type="text"
-                        inputMode="numeric"
-                        value={digit}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(/\D/g, "").slice(0, 1)
-                          const next = [...otp]
-                          next[i] = v
-                          setOtp(next)
-                          if (v && i < otp.length - 1) document.getElementById(`otp-${i + 1}`)?.focus()
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Backspace" && !otp[i] && i > 0) document.getElementById(`otp-${i - 1}`)?.focus()
-                        }}
-                        id={`otp-${i}`}
-                        className="h-12 w-12 border border-brand-border-light bg-card text-center font-serif text-xl font-bold text-brand-secondary outline-none focus:border-brand-primary-dark focus:ring-2 focus:ring-brand-primary-dark/20"
-                      />
-                    ))}
-                  </div>
-                  <div className="mt-4 text-center text-xs text-brand-secondary/55">
-                    Didn&apos;t receive?{" "}
+                  <OtpCodeInput
+                    value={otp}
+                    onChange={(next) => {
+                      setOtp(next)
+                      if (formError && !codeLocked) setFormError(null)
+                    }}
+                    onComplete={(code) => void handleOtpSubmit(code)}
+                    disabled={codeLocked || isVerifyingOtp}
+                    invalid={!!formError}
+                  />
+                  <p className="mt-3 text-center text-[11px] text-brand-secondary/50" aria-live="polite">
+                    {codeLocked
+                      ? "Request a new code to continue."
+                      : expiresIn > 0
+                        ? `Code expires in ${formatCountdown(expiresIn)}`
+                        : "This code has expired — request a new one."}
+                  </p>
+                  <div className="mt-2 text-center text-xs text-brand-secondary/55">
+                    Didn&apos;t receive it?{" "}
                     {resendCooldown > 0 ? (
-                      <span className="font-bold text-brand-secondary/40">
-                        Resend in 0:{String(resendCooldown).padStart(2, "0")}
-                      </span>
+                      <span className="font-bold text-brand-secondary/40">Resend in {formatCountdown(resendCooldown)}</span>
                     ) : (
-                      <button onClick={handleResendOtp} className="font-bold text-brand-primary-dark hover:underline">Resend</button>
+                      <button
+                        onClick={handleResendOtp}
+                        disabled={isResendingOtp}
+                        className="font-bold text-brand-primary-dark hover:underline disabled:opacity-50"
+                      >
+                        {isResendingOtp ? "Sending…" : "Resend code"}
+                      </button>
                     )}
                   </div>
                   {formError && (
-                    <p className="mt-3 text-center text-xs font-semibold text-red-500">{formError}</p>
+                    <p className="mt-3 text-center text-xs font-semibold text-red-500" role="alert">{formError}</p>
                   )}
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={handleOtpSubmit}
-                    disabled={!otp.every((d) => d) || isVerifyingOtp}
+                    onClick={() => void handleOtpSubmit()}
+                    disabled={!otp.every((d) => d) || isVerifyingOtp || codeLocked || expiresIn === 0}
                     className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
                   >
                     <span className="relative z-10 flex items-center gap-2">
@@ -510,35 +605,50 @@ export function LoginPage() {
                   <p className="mt-2 text-sm text-brand-secondary/60">
                     Enter your email — we&apos;ll send a 6-digit OTP.
                   </p>
-                  <div className="mt-6">
-                    <label className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
-                      Email address
-                    </label>
-                    <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
-                      <Mail className="h-4 w-4 text-brand-primary-dark" />
-                      <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="you@email.com"
-                        className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
-                      />
-                    </div>
-                  </div>
-                  {formError && (
-                    <p className="mt-3 text-xs font-semibold text-red-500">{formError}</p>
-                  )}
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleSendEmailOtp}
-                    disabled={!isValidEmail(email) || isRequestingOtp}
-                    className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      void handleSendEmailOtp()
+                    }}
+                    noValidate
                   >
-                    <span className="relative z-10 flex items-center gap-2">
-                      {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
-                    </span>
-                  </motion.button>
+                    <div className="mt-6">
+                      <label htmlFor="login-email" className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/50">
+                        Email address
+                      </label>
+                      <div className="mt-1.5 flex items-center gap-2 border border-brand-border-light bg-card px-4 py-3 focus-within:border-brand-primary-dark">
+                        <Mail className="h-4 w-4 text-brand-primary-dark" />
+                        <input
+                          id="login-email"
+                          type="email"
+                          autoComplete="email"
+                          autoFocus
+                          value={email}
+                          onChange={(e) => {
+                            setEmail(e.target.value)
+                            setNotRegistered(false)
+                          }}
+                          placeholder="you@email.com"
+                          className="w-full bg-transparent text-sm font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+                        />
+                      </div>
+                    </div>
+                    {notRegisteredNotice}
+                    {formError && (
+                      <p className="mt-3 text-xs font-semibold text-red-500" role="alert">{formError}</p>
+                    )}
+                    <motion.button
+                      type="submit"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      disabled={!emailValid || isRequestingOtp}
+                      className="btn-gold mt-6 flex w-full items-center justify-center gap-2 overflow-hidden py-3.5 text-sm font-bold disabled:opacity-50"
+                    >
+                      <span className="relative z-10 flex items-center gap-2">
+                        {isRequestingOtp ? "Sending…" : "Send OTP"} <ArrowRight className="h-4 w-4" />
+                      </span>
+                    </motion.button>
+                  </form>
                 </motion.div>
               )}
             </AnimatePresence>

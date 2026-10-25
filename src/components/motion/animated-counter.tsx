@@ -35,7 +35,7 @@ export function AnimatedCounter({
   const inView = useInView(ref, { once: true, margin: "-40px" })
   const reduce = useReducedMotion()
   const mv = useMotionValue(0)
-  const [display, setDisplay] = useState(() => (reduce ? format(to, decimals, separator) : "0"))
+  const [display, setDisplay] = useState("0")
 
   useEffect(() => {
     if (!inView || reduce) return
@@ -50,7 +50,10 @@ export function AnimatedCounter({
   return (
     <span ref={ref} className={cn("tabular-nums", className)}>
       {prefix}
-      {display}
+      {/* Reduced motion: show the real value directly. useReducedMotion() is
+          null on the first render, so seeding state from it left these
+          users looking at "0" for every stat (the effect never animates). */}
+      {reduce ? format(to, decimals, separator) : display}
       {suffix}
     </span>
   )

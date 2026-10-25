@@ -88,14 +88,20 @@ export type LogoutBody = {
   allDevices?: boolean
 }
 
-// The full profile resource (GET /users/me/profile) isn't integrated here —
-// only auth is. This is just the one field the login flow reads off
-// GET /auth/me's sparse `profile` (only fields that have actually been set
-// are present at all; verified 2026-08-25 against the live dev API).
+// GET /auth/me's `profile` is sparse — only fields that have actually been
+// set are present at all, and it's null for a brand-new account (verified
+// against the live dev API). The full resource is GET /users/me/profile.
 export type GetMeResponse = {
   data: {
     user: ApiUser
-    profile: { fullName?: string | null } | null
+    profile: {
+      fullName?: string | null
+      city?: string | null
+      state?: string | null
+      intent?: string | null
+      avatarUrl?: string | null
+      completedAt?: string | null
+    } | null
   }
 }
 

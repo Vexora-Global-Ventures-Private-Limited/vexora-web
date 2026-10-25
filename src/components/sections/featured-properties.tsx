@@ -3,7 +3,8 @@
 import { useState } from "react"
 import Image from "next/image"
 import { ArrowUpRight, ArrowRight, Lock, Phone, Mail, Building2, Heart } from "lucide-react"
-import { properties, type Property } from "@/lib/vxp-data"
+import { searchDocToProperty, toShortlistSnapshot, type ApiProperty } from "@/lib/api-mappers"
+import { useSearchQuery } from "@/store/api/searchApi"
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog"
@@ -17,26 +18,29 @@ import { ROUTES } from "@/lib/routes"
 import { SponsoredPropertiesAdSlot } from "@/components/ads/sponsored-properties-ad-slot"
 
 const priorityOrder: Record<string, number> = { Sponsored: 0, Featured: 1, Organic: 2 }
-const sorted = [...properties].sort(
-  (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority] || (a.pos ?? 99) - (b.pos ?? 99),
-)
-
-const lead = sorted[0]
-const rest = sorted.slice(1, 5)
 
 export function FeaturedProperties() {
   const { user } = useNav()
   const router = useRouter()
-  const [gated, setGated] = useState<Property | null>(null)
+  const [gated, setGated] = useState<ApiProperty | null>(null)
   const shortlistedIds = useShortlistStore((s) => s.shortlistedIds)
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
 
-  const handleView = (p: Property) => {
+  // Newest live listings; the boost buckets (rank_bucket) still lead —
+  // Sponsored → Featured → Organic, never reordered by recency (BR-03).
+  const { data, isLoading, isError, refetch } = useSearchQuery({ sort: "newest", limit: 5 })
+  const sorted = (data?.hits ?? [])
+    .map(searchDocToProperty)
+    .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+  const lead = sorted[0]
+  const rest = sorted.slice(1, 5)
+
+  const handleView = (p: ApiProperty) => {
     if (!user) {
       setGated(p)
       return
     }
-    router.push(ROUTES.propertyDetail(p.id))
+    router.push(ROUTES.propertyDetail(p.slug))
   }
 
   return (
@@ -64,7 +68,7 @@ export function FeaturedProperties() {
           <Reveal direction="up" delay={0.2} className="hidden shrink-0 pb-2 md:block">
             <button
               type="button"
-              onClick={() => handleView(lead)}
+              onClick={() => router.push(ROUTES.properties)}
               className="link-editorial text-[12px] font-semibold uppercase tracking-[0.16em] text-brand-secondary"
             >
               The full portfolio <ArrowRight className="h-3.5 w-3.5" />
@@ -77,14 +81,50 @@ export function FeaturedProperties() {
           <SponsoredPropertiesAdSlot />
         </Reveal>
 
+        {!lead && (
+          <div className="mt-10 border border-brand-secondary/12 bg-card/60 p-12 text-center">
+            <p className="font-serif text-xl text-brand-secondary">
+              {isLoading
+                ? "Loading the latest residences…"
+                : isError
+                  ? "We couldn't load the latest residences."
+                  : "New residences are being verified — check back shortly."}
+            </p>
+            {isError && (
+              <button
+                type="button"
+                onClick={() => refetch()}
+                className="link-editorial mt-4 mr-6 text-[12px] font-semibold uppercase tracking-[0.16em] text-brand-secondary"
+              >
+                Try again
+              </button>
+            )}
+            {!isLoading && (
+              <button
+                type="button"
+                onClick={() => router.push(ROUTES.properties)}
+                className="link-editorial mt-4 text-[12px] font-semibold uppercase tracking-[0.16em] text-brand-secondary"
+              >
+                Browse all listings <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Lead residence — monumental editorial spread */}
+        {lead && (
         <Reveal direction="up" delay={0.1} className="mt-10">
           <article
             className="group grid cursor-pointer grid-cols-1 gap-8 lg:grid-cols-[1.55fr_1fr] lg:gap-14"
             onClick={() => handleView(lead)}
             role="button"
             tabIndex={0}
-            onKeyDown={(e) => e.key === "Enter" && handleView(lead)}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault()
+                handleView(lead)
+              }
+            }}
             aria-label={`${lead.title} — ${lead.price}`}
           >
             <div className="media-reveal relative aspect-[16/10] lg:aspect-auto lg:min-h-[36rem]">
@@ -97,7 +137,7 @@ export function FeaturedProperties() {
               />
               <div className="absolute inset-0 bg-gradient-to-t from-ink-cinema/50 via-transparent to-transparent" />
               <span className="absolute left-6 top-6 border border-white/25 bg-black/30 px-3.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-white backdrop-blur-md">
-                Private launch
+                {lead.priority === "Organic" ? "Just listed" : lead.priority}
               </span>
               {!user ? (
                 <span className="absolute bottom-6 right-6 flex h-11 w-11 items-center justify-center rounded-full border border-white/30 bg-black/35 text-white backdrop-blur-md">
@@ -105,7 +145,7 @@ export function FeaturedProperties() {
                 </span>
               ) : (
                 <button
-                  onClick={(e) => { e.stopPropagation(); toggleShortlist(lead.id) }}
+                  onClick={(e) => { e.stopPropagation(); toggleShortlist(lead.id, toShortlistSnapshot(lead)) }}
                   aria-pressed={shortlistedIds.includes(lead.id)}
                   aria-label={shortlistedIds.includes(lead.id) ? "Remove from shortlist" : "Add to shortlist"}
                   className={
@@ -121,22 +161,21 @@ export function FeaturedProperties() {
             <div className="flex flex-col justify-between py-2">
               <div>
                 <p className="text-[11px] font-semibold uppercase tracking-[0.26em] text-brand-primary-dark">
-                  {lead.developer} · {lead.location}
+                  {lead.type} · {lead.location}
                 </p>
                 <h3 className="mt-4 font-serif text-3xl font-semibold leading-[1.08] text-brand-secondary sm:text-4xl lg:text-[2.75rem]">
                   {lead.title}
                 </h3>
                 <p className="mt-5 max-w-md text-[15px] leading-relaxed text-brand-secondary/62">
-                  A sky residence conceived for those who measure a home in
-                  horizons — {lead.beds} bedrooms, {lead.area} of glass-lined
-                  living, and the Arabian Sea below.
+                  Freshly listed for {lead.purpose.toLowerCase()} in {lead.city || lead.location} — open the residence for the
+                  full details and to contact the owner directly.
                 </p>
 
                 <dl className="mt-9 grid grid-cols-3 border-t border-brand-secondary/12">
                   {[
-                    { k: "Bedrooms", v: String(lead.beds) },
+                    { k: "Configuration", v: lead.beds ? `${lead.beds} BHK` : "—" },
                     { k: "Area", v: lead.area },
-                    { k: "Status", v: lead.status },
+                    { k: "Purpose", v: `For ${lead.purpose}` },
                   ].map((item, i) => (
                     <div key={item.k} className={"py-4 " + (i !== 0 ? "border-l border-brand-secondary/10 pl-5" : "pr-5")}>
                       <dt className="text-[10px] font-medium uppercase tracking-[0.18em] text-brand-secondary/45">{item.k}</dt>
@@ -148,7 +187,7 @@ export function FeaturedProperties() {
 
               <div className="mt-10 flex items-end justify-between border-t border-brand-secondary/12 pt-7">
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-brand-secondary/45">From</p>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-brand-secondary/45">Asking</p>
                   <p className="mt-1 font-serif text-3xl font-semibold text-brand-secondary">{lead.price}</p>
                 </div>
                 <span className="btn-piano px-7 py-3.5 text-[12px] font-semibold uppercase tracking-[0.14em]">
@@ -159,6 +198,7 @@ export function FeaturedProperties() {
             </div>
           </article>
         </Reveal>
+        )}
 
         {/* Indexed grid */}
         <div className="mt-20 grid grid-cols-1 gap-x-10 gap-y-14 sm:grid-cols-2 lg:grid-cols-4">
@@ -169,7 +209,12 @@ export function FeaturedProperties() {
                 onClick={() => handleView(p)}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && handleView(p)}
+                onKeyDown={(e) => {
+                  if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                    e.preventDefault()
+                    handleView(p)
+                  }
+                }}
                 aria-label={`${p.title} — ${p.price}`}
               >
                 <div className="media-reveal relative aspect-[4/5]">
@@ -187,7 +232,7 @@ export function FeaturedProperties() {
                     </span>
                   ) : (
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id) }}
+                      onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id, toShortlistSnapshot(p)) }}
                       aria-pressed={shortlistedIds.includes(p.id)}
                       aria-label={shortlistedIds.includes(p.id) ? "Remove from shortlist" : "Add to shortlist"}
                       className={
@@ -203,7 +248,7 @@ export function FeaturedProperties() {
                 <div className="mt-5 border-t border-brand-secondary/12 pt-4">
                   <div className="flex items-baseline justify-between gap-3">
                     <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-brand-primary-dark">
-                      {String(i + 2).padStart(2, "0")} · {p.city}
+                      {String(i + 2).padStart(2, "0")} · {p.city || "India"}
                     </p>
                     <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-brand-secondary/40">
                       {p.type}
@@ -238,8 +283,9 @@ export function FeaturedProperties() {
         property={gated}
         onClose={() => setGated(null)}
         onLogin={() => {
+          const target = gated ? ROUTES.loginWithReturn(ROUTES.propertyDetail(gated.slug)) : ROUTES.login
           setGated(null)
-          router.push(ROUTES.login)
+          router.push(target)
         }}
       />
     </section>
@@ -251,7 +297,7 @@ function LoginGateDialog({
   onClose,
   onLogin,
 }: {
-  property: Property | null
+  property: ApiProperty | null
   onClose: () => void
   onLogin: () => void
 }) {
@@ -311,7 +357,7 @@ function LoginGateDialog({
                 variant="outline"
                 className="w-full rounded-none border-brand-border-light py-3 text-sm font-semibold text-brand-secondary hover:bg-brand-surface"
               >
-                <Mail className="mr-2 h-4 w-4 text-brand-primary-dark" /> Email + Password
+                <Mail className="mr-2 h-4 w-4 text-brand-primary-dark" /> Email + OTP
               </Button>
             </div>
 
@@ -319,7 +365,7 @@ function LoginGateDialog({
               <span className="flex items-center gap-1.5">
                 <Building2 className="h-3.5 w-3.5 text-brand-primary-dark" /> Free accounts
               </span>
-              <span className="font-semibold text-brand-secondary">2 lifetime contacts</span>
+              <span className="font-semibold text-brand-secondary">Free lifetime contacts</span>
             </div>
           </div>
         </div>

@@ -15,7 +15,10 @@ export function ConciergeFab() {
   return (
     <motion.button
       type="button"
-      aria-label={user ? "Dashboard" : "Private advisor"}
+      // Labelled for what it actually does — there's no advisor service
+      // behind it yet (that's a product decision), it opens sign-in.
+      aria-label={user ? "Open dashboard" : "Sign in"}
+      title={user ? "Open dashboard" : "Sign in"}
       onClick={() => router.push(user ? ROUTES.dashboard : ROUTES.login)}
       initial={reduce ? false : { opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}

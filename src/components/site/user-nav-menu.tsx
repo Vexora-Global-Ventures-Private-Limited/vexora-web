@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { LayoutDashboard, LogOut, ChevronDown } from "lucide-react"
+import { LayoutDashboard, LogOut, ChevronDown, Settings } from "lucide-react"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -25,14 +25,19 @@ export function UserNavMenu({ user, className }: { user: User; className?: strin
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        aria-label={`Account menu for ${user.name}`}
         className={cn(
           "flex items-center gap-2 border border-transparent px-2 py-1.5 text-sm font-semibold outline-none transition-colors hover:border-brand-border-light",
           className,
         )}
       >
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-ink-black to-ink-deep text-xs font-bold text-brand-primary">
-          {user.initials}
-        </span>
+        {user.avatarUrl ? (
+          <img src={user.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
+        ) : (
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-ink-black to-ink-deep text-xs font-bold text-brand-primary">
+            {user.initials}
+          </span>
+        )}
         <span className="hidden max-w-[9rem] truncate sm:block">{user.name.split(" ")[0]}</span>
         <ChevronDown className="hidden h-3.5 w-3.5 shrink-0 opacity-60 sm:block" />
       </DropdownMenuTrigger>
@@ -45,10 +50,17 @@ export function UserNavMenu({ user, className }: { user: User; className?: strin
         <DropdownMenuItem onClick={() => router.push(ROUTES.dashboard)}>
           <LayoutDashboard className="h-4 w-4" /> Dashboard
         </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => router.push(ROUTES.dashboardTab("settings"))}>
+          <Settings className="h-4 w-4" /> Profile &amp; settings
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem
-          onClick={async () => {
-            await logout()
+          onClick={() => {
+            // Navigate first: the session only clears once POST /auth/logout
+            // returns, so by then a portal page's guard can't bounce the
+            // visitor to /login instead of home. logout() never throws.
             router.push(ROUTES.home)
+            void logout()
           }}
         >
           <LogOut className="h-4 w-4" /> Sign out

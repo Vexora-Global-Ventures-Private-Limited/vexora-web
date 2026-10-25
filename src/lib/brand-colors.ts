@@ -61,7 +61,11 @@ export function loadBrandColors(): BrandColors {
 }
 
 export function saveBrandColors(colors: BrandColors) {
-  localStorage.setItem(BRAND_COLORS_STORAGE_KEY, JSON.stringify(colors))
+  try {
+    localStorage.setItem(BRAND_COLORS_STORAGE_KEY, JSON.stringify(colors))
+  } catch {
+    // Private mode / storage blocked or full — the colours still apply for this visit.
+  }
 }
 
 /**
@@ -123,7 +127,11 @@ export function applyBrandColors(
 
 export function resetBrandColors(root: HTMLElement = document.documentElement) {
   applyBrandColors({ ...DEFAULT_THEME_COLORS }, root)
-  localStorage.removeItem(BRAND_COLORS_STORAGE_KEY)
+  try {
+    localStorage.removeItem(BRAND_COLORS_STORAGE_KEY)
+  } catch {
+    // Storage blocked — nothing was saved to remove.
+  }
 }
 
 /**

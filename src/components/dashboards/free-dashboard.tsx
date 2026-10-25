@@ -7,24 +7,32 @@ import {
 import { useRouter } from "next/navigation"
 import { useNav } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
-import { properties } from "@/lib/vxp-data"
-import { useContactStore, FREE_CONTACT_LIMIT, CHANNEL_LABEL } from "@/lib/contact-store"
+import { useContactStore, leadsForAccount, FREE_CONTACT_LIMIT, CHANNEL_LABEL } from "@/lib/contact-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { useProjectsStore } from "@/lib/projects-store"
 import { buildShortlistItems } from "@/lib/shortlist-items"
+import { useGetQuotaQuery } from "@/store/api/usersApi"
+import { useGetUnreadCountQuery } from "@/store/api/notificationsApi"
 import { AnimatedCounter } from "@/components/motion/animated-counter"
 
 export function FreeDashboard() {
   const { user } = useNav()
   const router = useRouter()
-  const submittedLeads = useContactStore((s) => s.submittedLeads)
-  const freeContactsUsed = useContactStore((s) => s.freeContactsUsed)
-  const remaining = Math.max(0, FREE_CONTACT_LIMIT - freeContactsUsed)
+  // Leads this buyer sent via POST /leads (the API has no "my enquiries" list yet).
+  const allApiLeads = useContactStore((s) => s.apiLeads)
+  const apiLeads = leadsForAccount(allApiLeads, user?.id)
+  // GET /users/me/quota, fetched fresh every time (it changes on every
+  // contact). Shown as "—" until it arrives — never a guessed number.
+  const { data: quota, isError: quotaError } = useGetQuotaQuery(undefined, { skip: !user?.id, refetchOnMountOrArgChange: true })
+  const contactLimit = quota?.limit ?? FREE_CONTACT_LIMIT
+  const remaining = quota?.remaining ?? null
   const shortlistedIds = useShortlistStore((s) => s.shortlistedIds)
+  const snapshots = useShortlistStore((s) => s.snapshots)
   const allProjects = useProjectsStore((s) => s.projects)
+  const { data: unreadCount = 0 } = useGetUnreadCountQuery(undefined, { skip: !user?.id })
 
-  const myEnquiries = [...submittedLeads].reverse().slice(0, 5)
-  const shortlisted = buildShortlistItems(shortlistedIds, allProjects)
+  const myEnquiries = apiLeads.slice(0, 5)
+  const shortlisted = buildShortlistItems(shortlistedIds, snapshots, allProjects)
 
   return (
     <div className="space-y-6">
@@ -40,8 +48,13 @@ export function FreeDashboard() {
               Welcome back, {user?.name.split(" ")[0] ?? "there"} 👋
             </h2>
             <p className="mt-1 text-sm text-brand-secondary/65">
-              You have <b className="text-brand-primary-dark">{shortlisted.length} shortlisted</b> homes and{" "}
-              <b className="text-brand-primary-dark">{remaining} free contact{remaining === 1 ? "" : "s"}</b> left.
+              You have <b className="text-brand-primary-dark">{shortlisted.length} shortlisted</b> home{shortlisted.length === 1 ? "" : "s"}
+              {remaining !== null && (
+                <>
+                  {" "}and <b className="text-brand-primary-dark">{remaining} free contact{remaining === 1 ? "" : "s"}</b> left
+                </>
+              )}
+              .
             </p>
           </div>
           <button
@@ -55,10 +68,15 @@ export function FreeDashboard() {
 
       {/* Top stats */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Free Contacts Left" value={remaining} suffix={`/${FREE_CONTACT_LIMIT}`} icon={Phone} />
-        <StatCard label="Enquiries Sent" value={submittedLeads.length} icon={Send} />
+        <StatCard
+          label={quotaError ? "Free Contacts Left (couldn't load)" : "Free Contacts Left"}
+          value={remaining}
+          suffix={`/${contactLimit}`}
+          icon={Phone}
+        />
+        <StatCard label="Enquiries Sent" value={apiLeads.length} icon={Send} />
         <StatCard label="Shortlisted" value={shortlisted.length} icon={Heart} />
-        <StatCard label="Notifications" value={3} icon={Bell} />
+        <StatCard label="Unread Notifications" value={unreadCount} icon={Bell} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
@@ -83,19 +101,18 @@ export function FreeDashboard() {
               </div>
             )}
             {myEnquiries.map((lead) => {
-              const property = properties.find((p) => p.id === lead.propertyId)
               return (
                 <motion.button
-                  key={lead.id}
+                  key={lead.leadId}
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
-                  onClick={() => property && router.push(ROUTES.propertyDetail(property.id))}
+                  onClick={() => router.push(ROUTES.propertyDetail(lead.slug))}
                   className="flex w-full items-center justify-between border border-brand-border bg-card p-3 text-left hover:border-brand-primary/40"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-xs font-bold text-brand-secondary">{property?.title ?? lead.propertyId}</div>
+                    <div className="truncate text-xs font-bold text-brand-secondary">{lead.title}</div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-brand-secondary/55">
-                      <MapPin className="h-3 w-3 text-brand-primary-dark" /> {property?.location}
+                      <MapPin className="h-3 w-3 text-brand-primary-dark" /> {lead.location}
                     </div>
                     {/* Never surface delivered/undelivered to the buyer — identical copy either way. */}
                     <div className="mt-1 text-[10px] text-brand-secondary/45">{CHANNEL_LABEL[lead.channel]} · Sent</div>
@@ -118,11 +135,11 @@ export function FreeDashboard() {
             {shortlisted.map((item) => (
               <button
                 key={`${item.kind}-${item.id}`}
-                onClick={() => router.push(item.href)}
+                onClick={() => router.push(item.href ?? ROUTES.dashboardTab("shortlist"))}
                 className="group flex w-full items-center gap-3 border border-brand-border bg-brand-tertiary/40 p-3 text-left hover:border-brand-primary/40"
               >
                 <div className="relative h-14 w-14 shrink-0 overflow-hidden">
-                  <img src={item.image} alt={item.title} className="h-full w-full object-cover" />
+                  <img src={item.image} alt="" loading="lazy" className="h-full w-full object-cover" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-bold text-brand-secondary">{item.title}</div>
@@ -158,14 +175,14 @@ export function FreeDashboard() {
       <div className="flex items-center gap-3 border border-brand-primary/30 bg-brand-tertiary p-4 text-xs text-brand-secondary/70">
         <Phone className="h-4 w-4 text-brand-primary-dark" />
         <div>
-          <b className="text-brand-secondary">Contact rule:</b> free accounts get 2 lifetime contacts, no monthly reset. Become a member for unlimited contacts.
+          <b className="text-brand-secondary">Contact rule:</b> free accounts get {contactLimit} lifetime contacts, no monthly reset. Become a member for unlimited contacts.
         </div>
       </div>
     </div>
   )
 }
 
-function StatCard({ label, value, suffix, icon: Icon }: { label: string; value: number; suffix?: string; icon: typeof Phone }) {
+function StatCard({ label, value, suffix, icon: Icon }: { label: string; value: number | null; suffix?: string; icon: typeof Phone }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
@@ -178,7 +195,7 @@ function StatCard({ label, value, suffix, icon: Icon }: { label: string; value: 
         </div>
       </div>
       <div className="mt-3 font-serif text-3xl font-bold text-brand-secondary">
-        <AnimatedCounter to={value} suffix={suffix} duration={1.5} />
+        {value === null ? "—" : <AnimatedCounter to={value} suffix={suffix} duration={1.5} />}
       </div>
       <div className="text-xs uppercase tracking-wide text-brand-secondary/55">{label}</div>
     </motion.div>

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useSyncExternalStore } from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { cn } from "@/lib/utils"
@@ -16,9 +16,13 @@ type ThemeToggleProps = {
 /** Light/dark toggle — theme choice persists via next-themes (localStorage). */
 export function ThemeToggle({ className, lightClassName, darkClassName, showLabel }: ThemeToggleProps) {
   const { resolvedTheme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => setMounted(true), [])
+  // false during SSR/hydration, true once on the client — the theme is only
+  // known client-side, so the icon renders after hydration (no mismatch).
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
 
   const isDark = mounted && resolvedTheme === "dark"
 

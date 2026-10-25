@@ -10,7 +10,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { ROUTES } from "@/lib/routes"
 import { useNav } from "@/lib/nav-store"
 import { useThemeSettings } from "@/lib/theme-settings-store"
@@ -18,7 +18,6 @@ import { loadCommandRecents, pushCommandRecent, type CommandRecent } from "@/lib
 import {
   Building2,
   Crown,
-  Headset,
   LayoutDashboard,
   LogIn,
   MapPin,
@@ -40,22 +39,43 @@ export function CommandPalette() {
   const user = useNav((s) => s.user)
   const openSettings = useThemeSettings((s) => s.setOpen)
 
+  const pathname = usePathname()
+
+  // Recents are re-read whenever the palette opens (another tab may have
+  // added some) — in the open handler, not an effect.
+  const setPaletteOpen = useCallback((next: boolean) => {
+    if (next) setRecents(loadCommandRecents())
+    setOpen(next)
+  }, [])
+
   const run = useCallback((item: CommandRecent, fn: () => void) => {
     setOpen(false)
-    const next = pushCommandRecent(item)
-    setRecents(next)
+    try {
+      setRecents(pushCommandRecent(item))
+    } catch {
+      // Storage unavailable (private mode / quota) — recents are a nicety.
+    }
     fn()
   }, [])
 
-  useEffect(() => {
-    if (open) setRecents(loadCommandRecents())
-  }, [open])
+  /** Homepage sections only exist on "/" — from anywhere else, go there first. */
+  const goToSection = useCallback(
+    (hash: string) => {
+      const el = document.querySelector(hash)
+      if (el) el.scrollIntoView({ behavior: "smooth" })
+      else router.push(`${ROUTES.home}${hash}`)
+    },
+    [router],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault()
-        setOpen((v) => !v)
+        setOpen((v) => {
+          if (!v) setRecents(loadCommandRecents())
+          return !v
+        })
       }
     }
     window.addEventListener("keydown", onKey)
@@ -63,7 +83,7 @@ export function CommandPalette() {
   }, [])
 
   return (
-    <CommandDialog open={open} onOpenChange={setOpen} title="Command palette" description="Search sections and actions">
+    <CommandDialog open={open} onOpenChange={setPaletteOpen} title="Command palette" description="Search sections and actions">
       <CommandInput placeholder="Search residences, cities, actions…" />
       <CommandList>
         <CommandEmpty>No results — try &quot;Mumbai&quot; or &quot;settings&quot;</CommandEmpty>
@@ -76,11 +96,11 @@ export function CommandPalette() {
                   value={r.label}
                   onSelect={() => {
                     if (r.action === "settings") run(r, () => openSettings(true))
-                    else if (r.action === "login") run(r, () => router.push(ROUTES.login))
+                    else if (r.action === "login") run(r, () => router.push(user ? ROUTES.dashboard : ROUTES.login))
                     else if (r.action === "dashboard") run(r, () => router.push(ROUTES.dashboard))
-                    else if (r.action === "signup") run(r, () => router.push(ROUTES.signup))
+                    else if (r.action === "signup") run(r, () => router.push(user ? ROUTES.dashboard : ROUTES.signup))
                     else if (r.action === "top") run(r, () => window.scrollTo({ top: 0, behavior: "smooth" }))
-                    else if (r.action.startsWith("#")) run(r, () => document.querySelector(r.action)?.scrollIntoView({ behavior: "smooth" }))
+                    else if (r.action.startsWith("#")) run(r, () => goToSection(r.action))
                   }}
                 >
                   <MapPin className="mr-2 h-4 w-4 text-brand-primary-dark" />
@@ -96,7 +116,7 @@ export function CommandPalette() {
             <CommandItem
               key={s.id}
               value={s.label}
-              onSelect={() => run({ id: s.id, label: s.label, action: s.href }, () => document.querySelector(s.href)?.scrollIntoView({ behavior: "smooth" }))}
+              onSelect={() => run({ id: s.id, label: s.label, action: s.href }, () => goToSection(s.href))}
             >
               <MapPin className="mr-2 h-4 w-4 text-brand-primary-dark" />
               {s.label}
@@ -106,24 +126,29 @@ export function CommandPalette() {
         <CommandSeparator />
         <CommandGroup heading="Actions">
           {user ? (
-            <CommandItem value="dashboard" onSelect={() => run({ id: "advisor", label: "Dashboard", action: "dashboard" }, () => router.push(ROUTES.dashboard))}>
+            <CommandItem value="dashboard" onSelect={() => run({ id: "dashboard", label: "Dashboard", action: "dashboard" }, () => router.push(ROUTES.dashboard))}>
               <LayoutDashboard className="mr-2 h-4 w-4" />
               Dashboard
             </CommandItem>
           ) : (
-            <CommandItem value="advisor login" onSelect={() => run({ id: "advisor", label: "Private advisor", action: "login" }, () => router.push(ROUTES.login))}>
-              <Headset className="mr-2 h-4 w-4" />
-              Private advisor
-            </CommandItem>
+            <>
+              <CommandItem
+                value="login"
+                onSelect={() =>
+                  run({ id: "login", label: "Log in", action: "login" }, () =>
+                    router.push(pathname && pathname !== ROUTES.home ? ROUTES.loginWithReturn(pathname) : ROUTES.login),
+                  )
+                }
+              >
+                <LogIn className="mr-2 h-4 w-4" />
+                Log in
+              </CommandItem>
+              <CommandItem value="signup register" onSelect={() => run({ id: "signup", label: "Sign up", action: "signup" }, () => router.push(ROUTES.signup))}>
+                <Crown className="mr-2 h-4 w-4" />
+                Sign up
+              </CommandItem>
+            </>
           )}
-          <CommandItem value="login" onSelect={() => run({ id: "login", label: "Log in", action: "login" }, () => router.push(ROUTES.login))}>
-            <LogIn className="mr-2 h-4 w-4" />
-            Log in
-          </CommandItem>
-          <CommandItem value="signup register" onSelect={() => run({ id: "signup", label: "Sign up", action: "signup" }, () => router.push(ROUTES.signup))}>
-            <Crown className="mr-2 h-4 w-4" />
-            Sign up
-          </CommandItem>
           <CommandItem value="settings theme colors" onSelect={() => run({ id: "settings", label: "Open settings", action: "settings" }, () => openSettings(true))}>
             <Settings2 className="mr-2 h-4 w-4" />
             Open settings
@@ -134,7 +159,7 @@ export function CommandPalette() {
           </CommandItem>
         </CommandGroup>
         <CommandGroup heading="Explore">
-          <CommandItem value="properties luxury" onSelect={() => run({ id: "luxury", label: "Luxury listings", action: "#buy" }, () => document.getElementById("buy")?.scrollIntoView({ behavior: "smooth" }))}>
+          <CommandItem value="properties luxury search listings" onSelect={() => run({ id: "luxury", label: "Luxury listings", action: "#buy" }, () => router.push(ROUTES.properties))}>
             <Building2 className="mr-2 h-4 w-4" />
             Luxury listings
           </CommandItem>

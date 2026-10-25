@@ -6,6 +6,8 @@ import { createJSONStorage, persist } from "zustand/middleware"
 export type Tier = "F" | "M" | "J" | "V"
 
 export type User = {
+  /** Backend user id — absent only on the client-only demo accounts below. */
+  id?: string
   name: string
   email: string
   phone?: string
@@ -13,6 +15,8 @@ export type User = {
   tier: Tier
   tierName: string
   avatarColor: string
+  /** Profile photo (https URL) — initials are shown when absent. */
+  avatarUrl?: string | null
 }
 
 type NavState = {
@@ -24,7 +28,7 @@ type NavState = {
   setHasHydrated: (v: boolean) => void
 }
 
-const tierName = (t: Tier) => {
+export const tierName = (t: Tier) => {
   if (t === "F") return "Free Member"
   if (t === "M") return "Mercury Partner"
   if (t === "J") return "Jupiter Partner"

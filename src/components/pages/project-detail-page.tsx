@@ -12,10 +12,16 @@ import {
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useProjectsStore, getProjectExpiry } from "@/lib/projects-store"
-import { projectPriceRangeCr, projectAreaRangeSqft, type ProjectGalleryCategory, type ProjectContact } from "@/lib/projects-data"
+import {
+  projectPriceRangeCr,
+  projectAreaRangeSqft,
+  type ProjectGalleryCategory,
+  type ProjectContact,
+  type Project as MockProject,
+} from "@/lib/projects-data"
 import { useNav } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
-import { useContactStore, type ContactChannel } from "@/lib/contact-store"
+import type { ContactChannel } from "@/lib/contact-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
@@ -27,6 +33,8 @@ import { Reveal } from "@/components/motion/reveal"
 import { TiltCard } from "@/components/motion/tilt-card"
 import { AnimatedCounter } from "@/components/motion/animated-counter"
 import { ProjectPromotionAdSlot } from "@/components/ads/project-promotion-ad-slot"
+import { ApiProjectDetail } from "@/components/listings/api-project-detail"
+import { isObjectId } from "@/components/listings/project-helpers"
 
 /** A distinct icon per amenity, same idiom as the property detail page —
  *  falls back to a plain check for anything unmapped. */
@@ -44,18 +52,59 @@ const AMENITY_ICONS: Record<string, LucideIcon> = {
 
 const GALLERY_TABS: ProjectGalleryCategory[] = ["Aerial / Master Plan", "Elevation", "Amenities"]
 
+/**
+ * Real projects (Mongo ObjectIds from the API) render the API-backed
+ * inventory page. Prototype mock ids ("prj1"…) are still linked from mock
+ * surfaces elsewhere (ads, city pages), so they keep the original mock page
+ * below until those surfaces move to real data too.
+ */
 export function ProjectDetailPage({ projectId }: { projectId: string }) {
+  if (isObjectId(projectId)) return <ApiProjectDetail projectId={projectId} />
+  return <MockProjectDetailPage projectId={projectId} />
+}
+
+function MockProjectDetailPage({ projectId }: { projectId: string }) {
+  const projects = useProjectsStore((s) => s.projects)
+  const project = projects.find((p) => p.id === projectId)
+  // An unknown id used to silently show the FIRST sample project as if it
+  // were the one requested — show an honest not-found instead.
+  if (!project) return <ProjectNotFound />
+  return <MockProjectDetailBody project={project} />
+}
+
+function ProjectNotFound() {
+  const router = useRouter()
+  return (
+    <div className="mx-auto max-w-lg px-6 py-24 text-center">
+      <h1 className="font-serif text-2xl font-bold text-brand-secondary">Project not found</h1>
+      <p className="mt-2 text-sm text-brand-muted-foreground">This link doesn&apos;t match any project on VXP.</p>
+      <button onClick={() => router.push(ROUTES.projects)} className="btn-gold relative mt-6 overflow-hidden px-5 py-2.5 text-sm font-bold">
+        <span className="relative z-10">Browse projects</span>
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Prototype sample project (mock data — fictional builder, contacts, RERA
+ * numbers and view counts). Still linked from mock surfaces (city pages), so
+ * it's kept, but clearly labelled, and it never pretends to send an enquiry
+ * or reveal a phone number, and never offers owner controls to a real
+ * account.
+ */
+function MockProjectDetailBody({ project }: { project: MockProject }) {
   const { user } = useNav()
   const router = useRouter()
-  const submitContact = useContactStore((s) => s.submitContact)
   const projects = useProjectsStore((s) => s.projects)
   const deleteProject = useProjectsStore((s) => s.deleteProject)
   const renewProject = useProjectsStore((s) => s.renewProject)
-  const project = projects.find((p) => p.id === projectId) ?? projects[0]
   const isShortlisted = useShortlistStore((s) => s.isShortlisted(project.id))
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
+  const [sampleNoticeOpen, setSampleNoticeOpen] = useState(false)
+  const [shareMessage, setShareMessage] = useState<string | null>(null)
 
-  const isOwner = !!user && user.tier === "V" && project.isMine === true
+  // Sample data never belongs to a real account.
+  const isOwner = false
 
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [galleryTab, setGalleryTab] = useState<ProjectGalleryCategory>("Aerial / Master Plan")
@@ -91,34 +140,29 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
     return () => window.removeEventListener("keydown", onKey)
   }, [galleryOpen, galleryTab])
 
-  function handleContact(channel: ContactChannel, contact: ProjectContact) {
+  // There's no project-enquiry API and this is a fictional sample builder,
+  // so contacting never "sends" anything or reveals a (fake) phone number,
+  // and doesn't burn the buyer's free-contact quota.
+  function handleContact(_channel: ContactChannel, _contact: ProjectContact) {
     if (!user) {
       router.push(ROUTES.loginWithReturn(ROUTES.projectDetail(project.id)))
       return
     }
-    if (!mobileVerified) {
-      router.push(ROUTES.loginWithReturn(ROUTES.projectDetail(project.id)))
-      return
+    setSampleNoticeOpen(true)
+  }
+
+  async function share() {
+    const url = window.location.href
+    try {
+      if (navigator.share) await navigator.share({ title: project.name, url })
+      else {
+        await navigator.clipboard.writeText(url)
+        setShareMessage("Link copied")
+        window.setTimeout(() => setShareMessage(null), 2000)
+      }
+    } catch {
+      // Share sheet dismissed — nothing to do.
     }
-
-    const result = submitContact({
-      propertyId: project.id,
-      channel,
-      buyerName: user.name,
-      buyerPhone: user.phone || "",
-      sellerMembershipActive: true,
-      hasQuota: user.tier === "F",
-    })
-
-    if (!result.ok) {
-      setQuotaExhausted(true)
-      return
-    }
-
-    if (channel === "call") setRevealedContactId(contact.id)
-    if (channel === "whatsapp") window.open("https://wa.me/919876543210", "_blank", "noopener,noreferrer")
-    setConfirmed(true)
-    window.setTimeout(() => setConfirmed(false), 3200)
   }
 
   const { min: priceMin, max: priceMax } = projectPriceRangeCr(project)
@@ -139,7 +183,14 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
             <ArrowLeft className="h-4 w-4" /> {isOwner ? "Back to my projects" : "Back to projects"}
           </button>
           <div className="flex items-center gap-2">
-            <button className="grid h-10 w-10 place-items-center border border-brand-border-light text-brand-secondary/65 hover:bg-brand-surface"><Share2 className="h-4 w-4" /></button>
+            {shareMessage && <span role="status" className="text-xs font-semibold text-brand-primary-dark">{shareMessage}</span>}
+            <button
+              onClick={share}
+              aria-label="Share this project"
+              className="grid h-10 w-10 place-items-center border border-brand-border-light text-brand-secondary/65 hover:bg-brand-surface"
+            >
+              <Share2 className="h-4 w-4" />
+            </button>
             <button
               onClick={() => toggleShortlist(project.id)}
               aria-pressed={isShortlisted}
@@ -156,6 +207,10 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
       </header>
 
       <div className="mx-auto max-w-7xl px-6 py-8">
+        <p role="note" className="mb-4 border border-brand-primary/40 bg-brand-primary/10 px-4 py-2.5 text-xs font-semibold text-brand-secondary">
+          Sample project — this page shows illustrative data (builder, contacts, RERA details and figures are not real).
+        </p>
+
         {/* Breadcrumb */}
         <div className="mb-4 flex flex-wrap items-center gap-1.5 text-xs text-brand-secondary/55">
           <button onClick={() => router.push(ROUTES.home)} className="hover:text-brand-secondary">Home</button>
@@ -748,6 +803,27 @@ export function ProjectDetailPage({ projectId }: { projectId: string }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Sample-project notice (replaces the fake enquiry/call/WhatsApp flow) */}
+        <Dialog open={sampleNoticeOpen} onOpenChange={setSampleNoticeOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="font-serif text-xl">This is a sample project</DialogTitle>
+              <DialogDescription>
+                Enquiries aren&apos;t available for sample projects — nothing was sent. Browse live listings to contact real sellers.
+              </DialogDescription>
+            </DialogHeader>
+            <button
+              onClick={() => {
+                setSampleNoticeOpen(false)
+                router.push(ROUTES.properties)
+              }}
+              className="btn-gold relative mt-2 w-full overflow-hidden py-3 text-sm font-bold"
+            >
+              <span className="relative z-10">Browse live listings →</span>
+            </button>
+          </DialogContent>
+        </Dialog>
 
         {/* Quota-exhausted upsell */}
         <Dialog open={quotaExhausted} onOpenChange={setQuotaExhausted}>

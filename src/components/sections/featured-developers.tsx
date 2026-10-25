@@ -1,7 +1,7 @@
 "use client"
 
-import { ArrowUpRight, ArrowRight } from "lucide-react"
-import { featuredDevelopers } from "@/lib/vxp-data"
+import { ArrowUpRight, ArrowRight, BadgeCheck } from "lucide-react"
+import { useGetFeaturedBuildersQuery } from "@/store/api/listingsApi"
 import { Reveal } from "@/components/motion/reveal"
 import { LinesReveal, MaskReveal } from "@/components/motion/text-reveal"
 import { useRouter } from "next/navigation"
@@ -11,9 +11,16 @@ import { FeaturedDeveloperAdSlot } from "@/components/ads/featured-developer-ad-
 /**
  * The Maisons — developers presented as a couture house index.
  * Dark ground, hairline rows, serif nameplates. No cards, no chips.
+ *
+ * Real data: GET /builders/featured (developers with an active "featured"
+ * ad — viewer's city first). The whole section stays hidden while that list
+ * is empty rather than padding it with placeholder developers.
  */
 export function FeaturedDevelopers() {
   const router = useRouter()
+  const { data: developers = [] } = useGetFeaturedBuildersQuery()
+
+  if (developers.length === 0) return null
 
   return (
     <section id="developers" className="royal-dark py-24 sm:py-32">
@@ -37,7 +44,7 @@ export function FeaturedDevelopers() {
           </div>
           <Reveal direction="up" delay={0.2} className="max-w-xs pb-2">
             <p className="text-sm leading-relaxed text-white/55">
-              {featuredDevelopers.length} developers, four decades of landmarks. Pre-launch access and
+              {developers.length} featured developer{developers.length === 1 ? "" : "s"}. Pre-launch access and
               project-level detail, direct from each house.
             </p>
           </Reveal>
@@ -45,16 +52,16 @@ export function FeaturedDevelopers() {
 
         {/* Featured Developer ad — real advertiser placement, same slot used on city pages. */}
         <Reveal direction="up" delay={0.1} className="mt-14">
-          <FeaturedDeveloperAdSlot developerNames={featuredDevelopers.map((d) => d.name)} dark />
+          <FeaturedDeveloperAdSlot developerNames={developers.map((d) => d.displayName)} dark />
         </Reveal>
 
         {/* Maison index */}
         <div className="mt-10">
-          {featuredDevelopers.map((d, i) => (
-            <Reveal key={d.name} direction="up" index={i} staggerStep={0.06}>
+          {developers.map((d, i) => (
+            <Reveal key={d._id} direction="up" index={i} staggerStep={0.06}>
               <button
                 type="button"
-                onClick={() => router.push(`${ROUTES.projects}?q=${encodeURIComponent(d.name)}`)}
+                onClick={() => router.push(`${ROUTES.projects}?q=${encodeURIComponent(d.displayName)}`)}
                 className="group grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 border-t border-white/12 py-7 text-left transition-all duration-500 hover:bg-white/[0.035] hover:pl-5 sm:grid-cols-[4.5rem_1.6fr_1fr_auto] sm:gap-8"
               >
                 <span className="folio-numeral folio-numeral-dark hidden !text-[2.5rem] sm:block" aria-hidden>
@@ -64,24 +71,22 @@ export function FeaturedDevelopers() {
                 <span>
                   <span className="flex items-center gap-3">
                     <span className="font-serif text-2xl font-semibold text-white transition-colors duration-300 group-hover:text-brand-primary-light sm:text-3xl">
-                      {d.name}
+                      {d.displayName}
                     </span>
-                    {d.featured && (
-                      <span className="hidden border border-brand-primary/40 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-brand-primary-light md:inline-block">
-                        Featured
-                      </span>
-                    )}
+                    {d.badge && <BadgeCheck className="h-5 w-5 text-brand-primary-light" aria-label="Verified developer" />}
+                    <span className="hidden border border-brand-primary/40 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.2em] text-brand-primary-light md:inline-block">
+                      Featured
+                    </span>
                   </span>
-                  <span className="mt-1 block text-sm text-white/45">{d.tagline}</span>
+                  {d.city && <span className="mt-1 block text-sm text-white/45">{d.city}</span>}
                 </span>
 
                 <span className="hidden text-right sm:block">
-                  <span className="block font-serif text-lg font-semibold text-white/85">
-                    {d.projects} projects
-                  </span>
-                  <span className="mt-0.5 block text-xs uppercase tracking-[0.16em] text-white/40">
-                    {d.cities} cities · {d.rating} rated
-                  </span>
+                  {typeof d.projectCount === "number" && (
+                    <span className="block font-serif text-lg font-semibold text-white/85">
+                      {d.projectCount} project{d.projectCount === 1 ? "" : "s"}
+                    </span>
+                  )}
                 </span>
 
                 <span className="flex h-11 w-11 items-center justify-center rounded-full border border-white/18 text-white/60 transition-all duration-400 group-hover:border-brand-primary group-hover:bg-brand-primary group-hover:text-ink-black">

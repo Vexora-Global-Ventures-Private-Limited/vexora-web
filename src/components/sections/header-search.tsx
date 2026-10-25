@@ -1,37 +1,45 @@
 "use client"
 
-import { useState } from "react"
+import { useId, useState } from "react"
 import { useRouter } from "next/navigation"
 import { MapPin, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ROUTES } from "@/lib/routes"
-import { CITIES } from "@/lib/vxp-data"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-
-const INTENTS = [
-  { label: "Invest", purpose: null },
-  { label: "Sale", purpose: "Sale" },
-  { label: "Rent", purpose: "Rent" },
-] as const
+import {
+  SuggestionList,
+  useCityNames,
+  useSearchSuggestions,
+  useSuggestionKeys,
+} from "@/components/property/search-suggest"
 
 type HeaderSearchProps = {
   className?: string
 }
 
-/** Header-embedded quick search: Invest/Sale/Rent intent + city, submits into /properties' existing filter grammar. */
+/**
+ * Header-embedded quick search: keyword (with live title suggestions) +
+ * city from the Location Master, submitted into /properties' filter grammar.
+ */
 export function HeaderSearch({ className }: HeaderSearchProps) {
   const router = useRouter()
-  const [intent, setIntent] = useState<(typeof INTENTS)[number]["label"]>("Sale")
+  const [text, setText] = useState("")
+  const [focused, setFocused] = useState(false)
   const [city, setCity] = useState("All")
+  const cities = useCityNames()
+  const suggestions = useSearchSuggestions(text)
 
-  const submit = () => {
-    const params = new URLSearchParams()
-    const purpose = INTENTS.find((i) => i.label === intent)?.purpose
-    if (purpose) params.set("purpose", purpose)
-    if (city !== "All") params.set("city", city)
-    const qs = params.toString()
-    router.push(qs ? `${ROUTES.properties}?${qs}` : ROUTES.properties)
+  const listId = useId()
+
+  const submit = (q = text) => {
+    router.push(ROUTES.propertiesSearch({ q: q.trim() || undefined, city: city !== "All" ? city : undefined }))
   }
+  const pick = (s: string) => {
+    setText(s)
+    submit(s)
+  }
+  const keys = useSuggestionKeys({ suggestions, onPick: pick, onSubmit: () => submit() })
+  const showList = focused && keys.open && suggestions.length > 0
 
   return (
     <div
@@ -40,22 +48,23 @@ export function HeaderSearch({ className }: HeaderSearchProps) {
         className,
       )}
     >
-      <div className="flex shrink-0 items-stretch">
-        {INTENTS.map((i) => (
-          <button
-            key={i.label}
-            type="button"
-            onClick={() => setIntent(i.label)}
-            className={cn(
-              "flex w-16 items-center justify-center text-[11px] font-bold uppercase tracking-wide transition-colors duration-300",
-              intent === i.label
-                ? "bg-brand-secondary text-brand-primary-light"
-                : "text-brand-secondary/55 hover:bg-brand-surface hover:text-brand-secondary",
-            )}
-          >
-            {i.label}
-          </button>
-        ))}
+      <div className="relative flex min-w-0 flex-1 items-center">
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={keys.onKeyDown}
+          placeholder="Search homes…"
+          aria-label="Search properties"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={showList}
+          aria-controls={listId}
+          aria-activedescendant={showList && keys.active >= 0 ? `${listId}-${keys.active}` : undefined}
+          className="h-full w-full min-w-0 bg-transparent px-3 text-[12px] font-medium text-brand-secondary outline-none placeholder:text-brand-secondary/40"
+        />
+        {showList && <SuggestionList id={listId} suggestions={suggestions} active={keys.active} onPick={pick} />}
       </div>
 
       <span className="w-px shrink-0 self-stretch bg-brand-border-light" aria-hidden />
@@ -71,7 +80,7 @@ export function HeaderSearch({ className }: HeaderSearchProps) {
         </SelectTrigger>
         <SelectContent className="rounded-none border-brand-border-light" position="popper" sideOffset={6}>
           <SelectItem value="All" className="rounded-none text-xs">All cities</SelectItem>
-          {CITIES.map((c) => (
+          {cities.map((c) => (
             <SelectItem key={c} value={c} className="rounded-none text-xs">{c}</SelectItem>
           ))}
         </SelectContent>
@@ -79,7 +88,7 @@ export function HeaderSearch({ className }: HeaderSearchProps) {
 
       <button
         type="button"
-        onClick={submit}
+        onClick={() => submit()}
         className="flex shrink-0 items-center gap-1.5 bg-brand-primary px-4 text-[11px] font-bold uppercase tracking-wide text-ink-black transition-colors duration-300 hover:bg-brand-primary-light active:bg-brand-primary"
       >
         <Search className="h-3.5 w-3.5" />

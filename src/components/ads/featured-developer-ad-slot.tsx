@@ -2,43 +2,35 @@
 
 import { ArrowUpRight, Star } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { myAds } from "@/lib/dashboard-data"
-import { projects } from "@/lib/projects-data"
 import { ROUTES } from "@/lib/routes"
+import { HOMEPAGE_IMAGES } from "@/lib/homepage-images"
+import { useGetFeaturedBuildersQuery } from "@/store/api/listingsApi"
 
 /**
- * Finds the Live Featured Developer ad (if any) matching one of the given
- * developer names, and returns the exact developer name it promotes. Shared
- * by the ad slot itself and by callers that need to de-duplicate that same
- * developer out of an organic list rendered alongside the slot.
+ * Kept for callers that de-duplicate a featured developer out of an organic
+ * list. Real featured developers come from GET /builders/featured (async —
+ * see the slot below), and the prototype's organic developer lists are
+ * static names that never match them, so there's nothing to de-duplicate.
  */
-export function findFeaturedDeveloperName(developerNames: string[]): string | null {
-  const ad = myAds.find(
-    (a) => a.type === "Featured Developer" && a.status === "Live" && developerNames.some((name) => a.headline.startsWith(name)),
-  )
-  return ad ? ad.headline.split(" — ")[0].trim() : null
+export function findFeaturedDeveloperName(_developerNames: string[]): string | null {
+  return null
 }
 
 /**
- * "Featured Developer" ad slot — placement "Developers section + dedicated
- * page" per the ad-type program. Only renders when a Live Featured Developer
- * ad matches one of the developers actually active in this city (never a
- * generic/unrelated sponsor, and never a placeholder when there's no match).
+ * "Featured Developer" slot — GET /builders/featured (public). A builder is
+ * featured when an admin approves their paid `featured` ad, which flips
+ * `builder_profiles.isFeatured`. Renders nothing when no builder is
+ * featured — never a placeholder sponsor.
  */
-export function FeaturedDeveloperAdSlot({ developerNames, dark = false }: { developerNames: string[]; dark?: boolean }) {
+export function FeaturedDeveloperAdSlot({ dark = false }: { developerNames?: string[]; dark?: boolean }) {
   const router = useRouter()
-  const ad = myAds.find(
-    (a) => a.type === "Featured Developer" && a.status === "Live" && developerNames.some((name) => a.headline.startsWith(name)),
-  )
-  if (!ad) return null
-
-  const developerName = ad.headline.split(" — ")[0].trim()
-  const matchedProject = projects.find((p) => p.developer === developerName)
-  const destination = matchedProject ? ROUTES.projectDetail(matchedProject.id) : ROUTES.projects
+  const { data: builders } = useGetFeaturedBuildersQuery()
+  const builder = builders?.[0]
+  if (!builder) return null
 
   return (
     <button
-      onClick={() => router.push(destination)}
+      onClick={() => router.push(ROUTES.projects)}
       className={
         "group flex w-full items-center justify-between gap-4 overflow-hidden border text-left " +
         (dark
@@ -51,8 +43,8 @@ export function FeaturedDeveloperAdSlot({ developerNames, dark = false }: { deve
           <Star className="h-3 w-3 fill-ink-black" /> Featured
         </span>
         <div className="min-w-0">
-          <div className={"truncate font-serif text-lg font-bold " + (dark ? "text-white" : "text-brand-secondary")}>{developerName}</div>
-          <div className={"text-xs " + (dark ? "text-white/50" : "text-brand-secondary/55")}>{ad.placement}</div>
+          <div className={"truncate font-serif text-lg font-bold " + (dark ? "text-white" : "text-brand-secondary")}>{builder.displayName}</div>
+          {builder.city && <div className={"text-xs " + (dark ? "text-white/50" : "text-brand-secondary/55")}>{builder.city}</div>}
         </div>
       </div>
       <span
@@ -61,11 +53,11 @@ export function FeaturedDeveloperAdSlot({ developerNames, dark = false }: { deve
           (dark ? "text-brand-primary-light group-hover:text-white" : "text-brand-primary-dark group-hover:text-brand-secondary")
         }
       >
-        View profile <ArrowUpRight className="h-3.5 w-3.5" />
+        View projects <ArrowUpRight className="h-3.5 w-3.5" />
       </span>
       <img
-        src={ad.bannerImage}
-        alt={developerName}
+        src={builder.logoUrl || HOMEPAGE_IMAGES.commercialTower}
+        alt=""
         className="h-24 w-40 shrink-0 object-cover sm:h-28 sm:w-52"
       />
     </button>

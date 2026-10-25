@@ -1,6 +1,8 @@
 "use client"
 
 import { motion } from "framer-motion"
+import { useRouter } from "next/navigation"
+import { ROUTES } from "@/lib/routes"
 import {
   LayoutPanelTop, MapPin, Building2, Play, Crown, ArrowUpRight, Check, Wallet, ShieldCheck,
 } from "lucide-react"
@@ -17,6 +19,7 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 }
 
 export function AdvertiserSection() {
+  const router = useRouter()
   return (
     <section id="promote" className="royal-dark section-home relative overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-primary-muted/30 to-transparent" />
@@ -129,6 +132,9 @@ export function AdvertiserSection() {
               </ol>
             </div>
             <motion.button
+              // Was a dead button. /promote is portal-guarded, so a visitor
+              // who isn't signed in lands on login first.
+              onClick={() => router.push(ROUTES.promote)}
               whileHover={{ scale: 1.04 }}
               whileTap={{ scale: 0.96 }}
               className="btn-gold mt-6 inline-flex items-center justify-center gap-2 overflow-hidden py-3 text-sm font-bold"

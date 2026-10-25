@@ -6,10 +6,14 @@ import {
   ArrowLeft, ArrowUpRight, ChevronRight, MapPin, Building2, Layers3,
   Crown, Star, Sparkles, TrendingUp, Heart,
 } from "lucide-react"
-import { popularCities, propertiesInCity, cityStartingPriceCr, getCityBySlug, featuredDevelopers, type Property } from "@/lib/vxp-data"
+import { popularCities, getCityBySlug, featuredDevelopers, type Property } from "@/lib/vxp-data"
+import { formatCr, searchDocToProperty, toShortlistSnapshot } from "@/lib/api-mappers"
+import { useCityStats, formatStartingPrice } from "@/components/property/use-city-stats"
+import { useSearchQuery } from "@/store/api/searchApi"
+import { Skeleton } from "@/components/ui/skeleton"
 import { projectsInCity, type Project } from "@/lib/projects-data"
 import { ROUTES } from "@/lib/routes"
-import { useNav } from "@/lib/nav-store"
+import { useNav, canSell } from "@/lib/nav-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { UserNavMenu } from "@/components/site/user-nav-menu"
 import { Reveal } from "@/components/motion/reveal"
@@ -61,11 +65,12 @@ function topDevelopersIn(listings: Property[], projects: Project[]) {
 }
 
 // Real localities, parsed from the "Locality, City" location strings already on every listing/project.
-function popularAreasIn(listings: Property[], projects: Project[]) {
+function popularAreasIn(listings: Property[], projects: Project[], cityName: string) {
   const counts = new Map<string, number>()
   const addLocality = (location: string) => {
     const locality = location.split(",")[0]?.trim()
-    if (locality) counts.set(locality, (counts.get(locality) ?? 0) + 1)
+    // A listing with no locality on file formats as just the city name — not an "area".
+    if (locality && locality !== cityName) counts.set(locality, (counts.get(locality) ?? 0) + 1)
   }
   listings.forEach((l) => addLocality(l.location))
   projects.forEach((p) => addLocality(p.location))
@@ -76,12 +81,14 @@ function popularAreasIn(listings: Property[], projects: Project[]) {
 function configBreakdownIn(listings: Property[]) {
   const byBeds = new Map<number, number[]>()
   for (const l of listings) {
+    // Skip listings without a BHK or a price — they'd show as "0 BHK" / "from ₹ 0".
+    if (!l.beds || !l.priceCr) continue
     const prices = byBeds.get(l.beds) ?? []
     prices.push(l.priceCr)
     byBeds.set(l.beds, prices)
   }
   return [...byBeds.entries()]
-    .map(([beds, prices]) => ({ beds, minPriceCr: Math.min(...prices), count: prices.length }))
+    .map(([beds, prices]) => ({ beds, minPriceCr: Number(Math.min(...prices).toFixed(2)), count: prices.length }))
     .sort((a, b) => a.beds - b.beds)
 }
 
@@ -91,6 +98,12 @@ export function CityDetailPage({ slug }: { slug: string }) {
   const shortlistedIds = useShortlistStore((s) => s.shortlistedIds)
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
   const city = getCityBySlug(slug)
+  // Listings come from live search (city is matched exactly server-side).
+  const { data: search, isLoading: listingsLoading, isError: listingsError, refetch } = useSearchQuery(
+    { city: city?.name, limit: 50 },
+    { skip: !city },
+  )
+  const { count: listingCount, startingPriceCr } = useCityStats(city?.name ?? "")
 
   if (!city) {
     return (
@@ -109,15 +122,14 @@ export function CityDetailPage({ slug }: { slug: string }) {
     )
   }
 
-  const listings = [...propertiesInCity(city.name)].sort(byPriority)
+  const listings = (search?.hits ?? []).map(searchDocToProperty).sort(byPriority)
   const projects = [...projectsInCity(city.name)].sort(byPriority)
-  const startingPriceCr = cityStartingPriceCr(city.name)
   const otherCities = popularCities.filter((c) => c.slug !== city.slug)
   const newLaunches = projects.filter((p) => p.status === "New Launch")
   const developers = topDevelopersIn(listings, projects)
   const featuredDeveloperName = findFeaturedDeveloperName(developers.map(([name]) => name))
   const organicDevelopers = developers.filter(([name]) => name !== featuredDeveloperName)
-  const areas = popularAreasIn(listings, projects)
+  const areas = popularAreasIn(listings, projects, city.name)
   const configs = configBreakdownIn(listings)
 
   return (
@@ -141,11 +153,11 @@ export function CityDetailPage({ slug }: { slug: string }) {
             </div>
           </div>
           {user ? (
-            <UserNavMenu user={user} className="hidden text-brand-secondary sm:flex" />
+            <UserNavMenu user={user} className="text-brand-secondary" />
           ) : (
             <button
-              onClick={() => router.push(ROUTES.login)}
-              className="hidden border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface sm:block"
+              onClick={() => router.push(ROUTES.loginWithReturn(ROUTES.cityDetail(city.slug)))}
+              className="shrink-0 border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface"
             >
               Log in
             </button>
@@ -182,7 +194,7 @@ export function CityDetailPage({ slug }: { slug: string }) {
         <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div className="bg-card p-5 ring-1 ring-brand-border-light">
             <div className="font-serif text-3xl font-bold text-brand-secondary">
-              <AnimatedCounter to={listings.length} />
+              <AnimatedCounter to={listingCount} />
             </div>
             <div className="text-xs uppercase tracking-wide text-brand-secondary/55">Properties listed</div>
           </div>
@@ -194,7 +206,7 @@ export function CityDetailPage({ slug }: { slug: string }) {
           </div>
           <div className="col-span-2 bg-card p-5 ring-1 ring-brand-border-light sm:col-span-1">
             <div className="font-serif text-3xl font-bold text-brand-secondary">
-              {startingPriceCr !== undefined ? `₹ ${startingPriceCr} Cr` : "—"}
+              {startingPriceCr !== undefined ? formatStartingPrice(startingPriceCr).replace(/^from /, "") : "—"}
             </div>
             <div className="text-xs uppercase tracking-wide text-brand-secondary/55">Starting price</div>
           </div>
@@ -237,19 +249,36 @@ export function CityDetailPage({ slug }: { slug: string }) {
         <div className="mt-10">
           <div className="flex items-end justify-between">
             <h3 className="font-serif text-2xl font-bold text-brand-secondary">Properties in {city.name}</h3>
-            {listings.length > 0 && (
+            {listingCount > 0 && (
               <button
-                onClick={() => router.push(`${ROUTES.properties}?city=${encodeURIComponent(city.name)}`)}
+                onClick={() => router.push(ROUTES.propertiesSearch({ city: city.name }))}
                 className="flex items-center gap-1 text-xs font-bold text-brand-primary-dark hover:text-brand-secondary"
               >
-                View all {listings.length} in {city.name} <ChevronRight className="h-3.5 w-3.5" />
+                View all {listingCount} in {city.name} <ChevronRight className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
-          {listings.length === 0 ? (
+          {listingsLoading ? (
+            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="aspect-[4/3] w-full" />
+              ))}
+            </div>
+          ) : listingsError ? (
+            <p className="mt-4 text-sm text-brand-secondary/55">
+              Couldn&apos;t load listings for {city.name}.{" "}
+              <button onClick={() => refetch()} className="font-bold text-brand-primary-dark hover:underline">
+                Try again
+              </button>
+            </p>
+          ) : listings.length === 0 ? (
             <p className="mt-4 text-sm text-brand-secondary/55">
               VXP is expanding to {city.name} — no properties listed here yet. Be the first to{" "}
-              <button onClick={() => router.push(ROUTES.membership)} className="font-bold text-brand-primary-dark hover:underline">
+              {/* Sellers go straight to the wizard; everyone else needs a plan first. */}
+              <button
+                onClick={() => router.push(canSell(user) ? ROUTES.newListing : ROUTES.membership)}
+                className="font-bold text-brand-primary-dark hover:underline"
+              >
                 list one
               </button>.
             </p>
@@ -258,21 +287,27 @@ export function CityDetailPage({ slug }: { slug: string }) {
               {listings.slice(0, 12).map((p) => (
                 <div
                   key={p.id}
-                  role="button"
+                  role="link"
                   tabIndex={0}
-                  onClick={() => router.push(ROUTES.propertyDetail(p.id))}
-                  onKeyDown={(e) => e.key === "Enter" && router.push(ROUTES.propertyDetail(p.id))}
+                  onClick={() => router.push(ROUTES.propertyDetail(p.slug))}
+                  onKeyDown={(e) => {
+                    if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                      e.preventDefault()
+                      router.push(ROUTES.propertyDetail(p.slug))
+                    }
+                  }}
+                  aria-label={`${p.title}, ${p.price}`}
                   className="group cursor-pointer overflow-hidden bg-card text-left ring-1 ring-brand-border-light hover:ring-brand-primary/40"
                 >
                   <div className="relative aspect-[4/3] overflow-hidden">
-                    <img src={p.image} alt={p.title} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                    <img src={p.image} alt={p.title} loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                     {p.priority !== "Organic" && (
                       <div className="absolute left-3 top-3">
                         <PriorityBadge priority={p.priority} />
                       </div>
                     )}
                     <button
-                      onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id) }}
+                      onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id, toShortlistSnapshot(p)) }}
                       aria-pressed={shortlistedIds.includes(p.id)}
                       aria-label={shortlistedIds.includes(p.id) ? "Remove from shortlist" : "Add to shortlist"}
                       className={
@@ -305,7 +340,7 @@ export function CityDetailPage({ slug }: { slug: string }) {
                 <div key={c.beds} className="bg-card p-4 ring-1 ring-brand-border-light">
                   <div className="font-serif text-lg font-bold text-brand-secondary">{c.beds} BHK</div>
                   <div className="mt-1 text-xs text-brand-secondary/55">{c.count} listing{c.count === 1 ? "" : "s"}</div>
-                  <div className="mt-2 text-sm font-bold text-brand-primary-dark">from ₹ {c.minPriceCr} Cr</div>
+                  <div className="mt-2 text-sm font-bold text-brand-primary-dark">from {formatCr(c.minPriceCr)}</div>
                 </div>
               ))}
             </div>
@@ -409,7 +444,7 @@ export function CityDetailPage({ slug }: { slug: string }) {
               {areas.map(([area, count]) => (
                 <button
                   key={area}
-                  onClick={() => router.push(`${ROUTES.properties}?city=${encodeURIComponent(city.name)}&q=${encodeURIComponent(area)}`)}
+                  onClick={() => router.push(ROUTES.propertiesSearch({ city: city.name, q: area }))}
                   className="flex items-center gap-1.5 border border-brand-border-light bg-card px-4 py-2 text-sm font-semibold text-brand-secondary hover:border-brand-primary/40"
                 >
                   <MapPin className="h-3.5 w-3.5 text-brand-primary-dark" /> {area}

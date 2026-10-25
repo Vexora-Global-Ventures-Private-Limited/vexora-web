@@ -16,6 +16,40 @@ export type SubmittedLead = {
   delivered: boolean
 }
 
+/**
+ * A lead this buyer created via the real POST /leads. The backend has no
+ * "my sent enquiries" list (GET /users/me/enquiries is a hardcoded [] stub),
+ * so the buyer side keeps its own record of lead ids and re-reads each one
+ * via GET /leads/:id (which either side of a lead may call). Like the
+ * shortlist, it's per-device until that route is wired up server-side.
+ */
+export type ApiSentLead = {
+  /** The account that sent it — this device's list is shared by every account signed in on it. */
+  accountId: string
+  leadId: string
+  listingId: string
+  slug: string
+  title: string
+  location: string
+  channel: ContactChannel
+  createdAt: string
+}
+
+/**
+ * This account's sent leads, newest first. Entries are tagged with the
+ * sender's account id and filtered here, because the list outlives a
+ * session that ends WITHOUT a normal logout (e.g. the refresh token dying
+ * mid-session only clears the nav user) — the next account to sign in on
+ * the same device must never see the previous one's enquiries.
+ */
+export function leadsForAccount(leads: ApiSentLead[], accountId: string | undefined): ApiSentLead[] {
+  if (!accountId) return []
+  return leads.filter((l) => l.accountId === accountId)
+}
+
+/** Message cap for POST /leads — the backend accepts any length (5000+ chars verified live), so it's enforced here. */
+export const LEAD_MESSAGE_MAX = 1000
+
 export const FREE_CONTACT_LIMIT = 2
 
 // Seeded so a buyer's Enquiries tab isn't empty on first load — same idiom
@@ -39,6 +73,12 @@ export const CHANNEL_LABEL: Record<ContactChannel, string> = {
 type ContactState = {
   freeContactsUsed: number
   submittedLeads: SubmittedLead[]
+  apiLeads: ApiSentLead[]
+  recordApiLead: (lead: ApiSentLead) => void
+  clearApiLeads: () => void
+  /** `${accountId}:${listingId}` pairs already reported from this device — the backend accepts repeat reports. */
+  reportedListings: string[]
+  markReported: (accountId: string, listingId: string) => void
   submitContact: (args: {
     propertyId: string
     channel: ContactChannel
@@ -62,6 +102,16 @@ export const useContactStore = create<ContactState>()(
     (set, get) => ({
       freeContactsUsed: 0,
       submittedLeads: SEED_LEADS,
+      apiLeads: [],
+
+      recordApiLead: (lead) =>
+        set((state) => ({ apiLeads: [lead, ...state.apiLeads.filter((l) => l.leadId !== lead.leadId)] })),
+
+      clearApiLeads: () => set({ apiLeads: [] }),
+
+      reportedListings: [],
+      markReported: (accountId, listingId) =>
+        set((state) => ({ reportedListings: [...new Set([...state.reportedListings, `${accountId}:${listingId}`])] })),
 
       submitContact: ({ propertyId, channel, buyerName, buyerPhone, sellerMembershipActive, hasQuota }) => {
         if (hasQuota && get().freeContactsUsed >= FREE_CONTACT_LIMIT) {

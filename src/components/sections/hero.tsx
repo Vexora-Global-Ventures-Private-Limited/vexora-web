@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState, type CSSProperties } from "react"
+import { useCallback, useEffect, useId, useState, type CSSProperties } from "react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { motion, useReducedMotion } from "framer-motion"
@@ -10,11 +10,20 @@ import { LinesReveal, MaskReveal } from "@/components/motion/text-reveal"
 import { EASE_OUT } from "@/lib/motion-tokens"
 import { HOMEPAGE_IMAGES } from "@/lib/homepage-images"
 import { scrollToSection } from "@/lib/scroll-to-section"
-import { RESIDENCE_TYPE_MAP, BUDGET_BUCKETS, CITIES } from "@/lib/vxp-data"
+import { BUDGET_BUCKETS } from "@/lib/vxp-data"
 import { ROUTES } from "@/lib/routes"
+import { propertyTypeLabel } from "@/lib/api-mappers"
+import { useGetPublicConfigQuery } from "@/store/api/searchApi"
+import {
+  SuggestionList,
+  resolveSearchText,
+  useCityNames,
+  useSearchSuggestions,
+  useSuggestionKeys,
+} from "@/components/property/search-suggest"
 import { cn } from "@/lib/utils"
 
-const propertyTypes = Object.keys(RESIDENCE_TYPE_MAP)
+const ANY_TYPE = "Any residence"
 const budgets = ["Any budget", ...BUDGET_BUCKETS.map((b) => b.label)]
 
 const heroStats = [
@@ -101,11 +110,17 @@ function HeroImageCarousel({
 export function Hero() {
   const router = useRouter()
   const [location, setLocation] = useState("")
-  const [ptype, setPtype] = useState(propertyTypes[0])
+  const [locationFocused, setLocationFocused] = useState(false)
+  const [ptype, setPtype] = useState(ANY_TYPE)
   const [budget, setBudget] = useState(budgets[0])
   const [slide, setSlide] = useState(0)
   const [paused, setPaused] = useState(false)
   const reduce = useReducedMotion()
+  // Property types are admin-configured — never offer one search can't match.
+  const { data: config } = useGetPublicConfigQuery()
+  const propertyTypes = [ANY_TYPE, ...(config?.allowedPropertyTypes ?? [])]
+  const cities = useCityNames()
+  const suggestions = useSearchSuggestions(location)
 
   const goTo = useCallback((index: number) => {
     setSlide((index + HERO_SLIDES.length) % HERO_SLIDES.length)
@@ -122,24 +137,34 @@ export function Hero() {
     return () => window.clearInterval(id)
   }, [paused, nextSlide])
 
-  const handleSearch = () => {
-    const params = new URLSearchParams()
-    const typedLocation = location.trim()
-    if (typedLocation) {
-      const matchedCity = CITIES.find((c) => c.toLowerCase() === typedLocation.toLowerCase())
-      // Exact city match → the `city` facet; otherwise fall back to a free-text
-      // search so a locality name (e.g. "Worli") still filters results.
-      params.set(matchedCity ? "city" : "q", matchedCity ?? typedLocation)
-    }
-    const mappedType = RESIDENCE_TYPE_MAP[ptype]
-    if (mappedType) params.set("propertyType", mappedType)
+  const handleSearch = (text = location) => {
+    // Exact city match (against the Location Master) → the `city` facet;
+    // otherwise free-text `q`, so a locality or title still narrows results.
+    const { city, q } = resolveSearchText(text, cities)
     const bucket = BUDGET_BUCKETS.find((b) => b.label === budget)
-    if (bucket) {
-      params.set("priceMin", String(bucket.min))
-      if (bucket.max !== Infinity) params.set("priceMax", String(bucket.max))
-    }
-    const qs = params.toString()
-    router.push(qs ? `${ROUTES.properties}?${qs}` : ROUTES.properties)
+    router.push(
+      ROUTES.propertiesSearch({
+        city,
+        q,
+        propertyType: ptype !== ANY_TYPE ? ptype : undefined,
+        priceMin: bucket && bucket.min > 0 ? String(bucket.min) : undefined,
+        priceMax: bucket && bucket.max !== Infinity ? String(bucket.max) : undefined,
+      }),
+    )
+  }
+
+  const listId = useId()
+  const pickSuggestion = (s: string) => {
+    setLocation(s)
+    handleSearch(s)
+  }
+  const keys = useSuggestionKeys({ suggestions, onPick: pickSuggestion, onSubmit: () => handleSearch() })
+  const showList = locationFocused && keys.open && suggestions.length > 0
+
+  /** Scroll to a homepage section, or go to its full page when the section isn't rendered (e.g. no featured developers yet). */
+  const goToSection = (id: string, fallbackHref: string) => {
+    if (document.getElementById(id)) scrollToSection(id)
+    else router.push(fallbackHref)
   }
 
   const fade = (delay: number) => ({
@@ -232,7 +257,7 @@ export function Hero() {
           <motion.div {...fade(1.0)} className="mt-10 flex flex-wrap items-center gap-6">
             <button
               type="button"
-              onClick={() => scrollToSection("buy")}
+              onClick={() => goToSection("buy", ROUTES.properties)}
               className="btn-piano rounded-none px-8 py-4 text-[13px] font-semibold uppercase tracking-[0.14em]"
             >
               View the collection
@@ -240,7 +265,7 @@ export function Hero() {
             </button>
             <button
               type="button"
-              onClick={() => scrollToSection("developers")}
+              onClick={() => goToSection("developers", ROUTES.projects)}
               className="link-editorial text-[13px] font-semibold uppercase tracking-[0.14em] text-white/80 transition-colors hover:text-white"
             >
               Meet the developers
@@ -252,7 +277,7 @@ export function Hero() {
         <motion.div {...fade(1.05)} className="mt-6 lg:mt-10">
           <div className="border border-white/14 bg-black/38 backdrop-blur-xl">
             <div className="grid grid-cols-1 divide-y divide-white/10 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_auto] lg:divide-x lg:divide-y-0">
-              <label className="group flex items-center gap-3.5 px-6 py-5">
+              <label className="group relative flex items-center gap-3.5 px-6 py-5">
                 <MapPin className="h-4 w-4 shrink-0 text-brand-primary-light/80" strokeWidth={1.75} />
                 <div className="min-w-0 flex-1">
                   <span className="block text-[10px] font-semibold uppercase tracking-[0.22em] text-white/40">
@@ -263,11 +288,21 @@ export function Hero() {
                     value={location}
                     placeholder="Mumbai, Thane, Bengaluru…"
                     onChange={(e) => setLocation(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                    onFocus={() => setLocationFocused(true)}
+                    onBlur={() => setLocationFocused(false)}
+                    onKeyDown={keys.onKeyDown}
                     className="mt-1 w-full bg-transparent text-sm font-medium text-white outline-none placeholder:text-white/32"
-                    aria-label="Search location"
+                    aria-label="Search location or keyword"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={showList}
+                    aria-controls={listId}
+                    aria-activedescendant={showList && keys.active >= 0 ? `${listId}-${keys.active}` : undefined}
                   />
                 </div>
+                {showList && (
+                  <SuggestionList id={listId} suggestions={suggestions} active={keys.active} onPick={pickSuggestion} />
+                )}
               </label>
 
               <div className="flex items-center gap-3.5 px-6 py-5">
@@ -284,7 +319,7 @@ export function Hero() {
                       aria-label="Property type"
                     >
                       {propertyTypes.map((t) => (
-                        <option key={t} value={t}>{t}</option>
+                        <option key={t} value={t}>{t === ANY_TYPE ? t : propertyTypeLabel(t)}</option>
                       ))}
                     </select>
                     <ChevronDown className="pointer-events-none absolute right-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
@@ -316,7 +351,7 @@ export function Hero() {
 
               <button
                 type="button"
-                onClick={handleSearch}
+                onClick={() => handleSearch()}
                 className="group flex items-center justify-center gap-3 bg-brand-primary px-10 py-5 text-[13px] font-semibold uppercase tracking-[0.16em] text-ink-black transition-colors duration-300 hover:bg-brand-primary-light"
               >
                 <Search className="h-4 w-4 transition-transform duration-300 group-hover:scale-110" strokeWidth={2.25} />
@@ -352,7 +387,7 @@ export function Hero() {
       {/* Scroll cue */}
       <motion.button
         type="button"
-        onClick={() => scrollToSection("buy")}
+        onClick={() => goToSection("buy", ROUTES.properties)}
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: reduce ? 0 : 1.7, duration: 0.8 }}

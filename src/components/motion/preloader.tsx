@@ -4,31 +4,64 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { useCallback, useEffect, useState } from "react"
 import { EASE_OUT } from "@/lib/motion-tokens"
 
+const SEEN_KEY = "vxp-preloader-seen"
+
+function alreadySeen() {
+  try {
+    return sessionStorage.getItem(SEEN_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
 /**
  * Cinematic entry — full ink curtain, masked wordmark reveal,
  * hairline progress. Exits by lifting like a stage curtain.
+ *
+ * Plays once per browser session (it lives in the root layout, so without
+ * this every hard navigation — a shared link, a refresh on the dashboard —
+ * would sit behind a 1.6s curtain), and never for reduced-motion users.
  */
 export function Preloader() {
   const reduce = useReducedMotion()
   const [done, setDone] = useState(() => reduce === true)
   const [pct, setPct] = useState(0)
 
-  const finish = useCallback(() => setDone(true), [])
+  const finish = useCallback(() => {
+    setDone(true)
+    try {
+      sessionStorage.setItem(SEEN_KEY, "1")
+    } catch {
+      // Storage blocked — it'll just play again next load.
+    }
+  }, [])
 
   useEffect(() => {
-    if (reduce || done) return
+    if (done) return
+    let frame = 0
+    let exitTimer: ReturnType<typeof setTimeout> | undefined
+    // useReducedMotion() is null on the first render and only resolves
+    // after mount, so this has to react to it here — returning early on
+    // `reduce` without finishing left reduced-motion users stuck behind the
+    // curtain until they clicked it.
+    if (reduce || alreadySeen()) {
+      frame = requestAnimationFrame(finish)
+      return () => cancelAnimationFrame(frame)
+    }
     const start = performance.now()
     const duration = 1400
-    let frame = 0
     const tick = (now: number) => {
       const t = Math.min(1, (now - start) / duration)
       // ease the counter so it lingers briefly near the end
       setPct(Math.round((1 - Math.pow(1 - t, 2.2)) * 100))
       if (t < 1) frame = requestAnimationFrame(tick)
-      else setTimeout(finish, 240)
+      else exitTimer = setTimeout(finish, 240)
     }
     frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(exitTimer)
+    }
   }, [reduce, done, finish])
 
   useEffect(() => {

@@ -11,29 +11,34 @@ import {
   useLogoutMutation,
   useLazyGetMeQuery,
   type ApiUser,
+  type GetMeResponse,
   type OtpChannel,
   type OtpPurpose,
   type GoogleLoginResponse,
   type GoogleMode,
 } from "@/store/api/authApi"
 import { setTokens, clearTokens, getRefreshToken } from "@/lib/auth-tokens"
-import { useNav, type User } from "@/lib/nav-store"
+import { useNav, tierName, type Tier, type User } from "@/lib/nav-store"
+import { useLazyGetMyMembershipQuery, toNavTier } from "@/store/api/membershipsApi"
+import { baseApi } from "@/store/api/baseApi"
+import { useAppDispatch } from "@/store/hooks"
+import { useShortlistStore } from "@/lib/shortlist-store"
+import { useContactStore } from "@/lib/contact-store"
 
 /**
- * The backend (api.json) has no concept of membership tier — every freshly
- * authenticated user starts on the Free tier client-side until a real
- * membership/tier API exists. fullName isn't returned by the login/verify
- * responses themselves (it lives on the separate profile resource), so
- * callers should fetch GET /auth/me right after login and pass its `profile`
- * here — a returning user who already completed their profile gets their
- * real name instead of their raw phone number/email.
+ * Builds the nav-store user from the backend's pieces. fullName isn't on the
+ * login/verify responses (it lives on the profile resource), and tier isn't
+ * on /auth/me at all — it comes from GET /memberships/me. When `tier` isn't
+ * passed (e.g. that call failed), whatever tier was already set locally is
+ * kept rather than resetting a paying member back to Free.
  */
 // Exported so SessionHydrator can reuse it to refresh the nav user from
 // GET /auth/me on hard reload, not just right after login.
 export function mapApiUserToNavUser(
   apiUser: ApiUser,
-  profile?: { fullName?: string | null } | null,
+  profile?: GetMeResponse["data"]["profile"],
   previousUser?: User | null,
+  tier?: Tier,
 ): User {
   const displayName = profile?.fullName || apiUser.email || apiUser.mobile || "New Member"
   const initials =
@@ -43,46 +48,71 @@ export function mapApiUserToNavUser(
       .slice(0, 2)
       .map((part) => part.charAt(0).toUpperCase())
       .join("") || "NM"
+  const resolvedTier = tier ?? previousUser?.tier ?? "F"
 
   return {
+    id: apiUser.id,
     name: displayName,
     email: apiUser.email ?? "",
     phone: apiUser.mobile,
     initials,
-    // Tier has no backend concept (see module comment) — preserve whatever
-    // was already set locally rather than resetting a Mercury/Jupiter/Venus
-    // user back to Free every time this runs.
-    tier: previousUser?.tier ?? "F",
-    tierName: previousUser?.tierName ?? "Free Member",
+    tier: resolvedTier,
+    tierName: tierName(resolvedTier),
     avatarColor: previousUser?.avatarColor ?? "#bd9935",
+    // Completeness is NOT mirrored here: the app's rule (profile-options.ts)
+    // is stricter than the backend's completedAt, so screens compute it fresh.
+    avatarUrl: profile?.avatarUrl ?? null,
   }
 }
 
+/**
+ * Session assembly — /auth/me no longer bundles tier/quota/badges, so the
+ * identity and the tier are fetched in parallel and merged here. Tokens must
+ * already be stored. Quota is deliberately not part of the session (it goes
+ * stale on every contact — screens fetch it fresh), and /users/{id}/badges
+ * isn't deployed on the API yet.
+ */
+export function useLoadSession() {
+  const [triggerGetMe] = useLazyGetMeQuery()
+  const [triggerGetMembership] = useLazyGetMyMembershipQuery()
+  const setNavUser = useNav((s) => s.login)
+
+  return useCallback(
+    async (fallbackUser?: ApiUser) => {
+      const [me, membership] = await Promise.allSettled([
+        triggerGetMe().unwrap(),
+        triggerGetMembership().unwrap(),
+      ])
+      const tier = membership.status === "fulfilled" ? toNavTier(membership.value) : undefined
+      const previous = useNav.getState().user
+      if (me.status === "fulfilled") {
+        setNavUser(mapApiUserToNavUser(me.value.data.user, me.value.data.profile, previous, tier))
+        void useShortlistStore.getState().syncFromServer()
+      } else if (fallbackUser) {
+        // Better to finish login with a phone-number display name than to block it.
+        setNavUser(mapApiUserToNavUser(fallbackUser, null, previous, tier))
+      } else {
+        throw me.reason
+      }
+    },
+    [triggerGetMe, triggerGetMembership, setNavUser],
+  )
+}
+
 export function useAuth() {
-  const { login: setNavUser, logout: clearNavUser } = useNav()
+  const clearNavUser = useNav((s) => s.logout)
+  const dispatch = useAppDispatch()
   const [requestOtpMutation, requestOtpState] = useRequestOtpMutation()
   const [verifyOtpMutation, verifyOtpState] = useVerifyOtpMutation()
   const [resendOtpMutation, resendOtpState] = useResendOtpMutation()
   const [signupMutation, signupState] = useSignupMutation()
   const [googleLoginMutation, googleLoginState] = useGoogleLoginMutation()
   const [logoutMutation] = useLogoutMutation()
-  const [triggerGetMe] = useLazyGetMeQuery()
+  const loadSession = useLoadSession()
 
-  // Tokens must already be set (via setTokens) before this runs, since
-  // GET /auth/me is bearer-authenticated. Falls back to the login/verify
-  // response's bare user object if /auth/me fails for any reason — better to
-  // finish login with a phone-number display name than to block it.
-  const finishLogin = useCallback(
-    async (apiUser: ApiUser) => {
-      try {
-        const me = await triggerGetMe().unwrap()
-        setNavUser(mapApiUserToNavUser(me.data.user, me.data.profile))
-      } catch {
-        setNavUser(mapApiUserToNavUser(apiUser))
-      }
-    },
-    [triggerGetMe, setNavUser],
-  )
+  // Tokens must already be set (via setTokens) before this runs, since every
+  // session call is bearer-authenticated.
+  const finishLogin = useCallback((apiUser: ApiUser) => loadSession(apiUser), [loadSession])
 
   const requestOtp = useCallback(
     (destination: string, channel: OtpChannel, purpose: OtpPurpose) =>
@@ -126,15 +156,26 @@ export function useAuth() {
     [googleLoginMutation, finishLogin],
   )
 
+  // Never throws: the user's intent ("sign me out of this device, now")
+  // always succeeds locally, even when the server-side revoke can't be
+  // reached — callers can rely on navigating away afterwards.
   const logout = useCallback(async () => {
     const refreshToken = getRefreshToken()
     try {
       if (refreshToken) await logoutMutation({ refreshToken }).unwrap()
+    } catch {
+      // Offline / already-dead token — the local clear below is what matters.
     } finally {
       clearTokens()
       clearNavUser()
+      // The shortlist belongs to the account, not the device.
+      useShortlistStore.setState({ shortlistedIds: [], snapshots: {} })
+      useContactStore.getState().clearApiLeads()
+      // Drop every cached response (profile, shortlist, membership…) so the
+      // next account signed in on this tab never sees the previous one's data.
+      dispatch(baseApi.util.resetApiState())
     }
-  }, [logoutMutation, clearNavUser])
+  }, [logoutMutation, clearNavUser, dispatch])
 
   return {
     requestOtp,
