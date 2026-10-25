@@ -1,6 +1,6 @@
 "use client"
 
-import type { ReactNode } from "react"
+import type { FormEvent, ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import Link from "next/link"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
@@ -64,10 +64,21 @@ export function DashboardShell({
   const pathname = usePathname()
   const searchParams = useSearchParams()
 
+  // push (not replace) so the browser Back button steps through tabs.
+  // Tab-scoped params (e.g. an open lead) don't carry over to another tab.
   const setTab = (id: string) => {
     const params = new URLSearchParams(searchParams.toString())
+    params.delete("lead")
     params.set("tab", id)
-    router.replace(`${pathname}?${params.toString()}`)
+    router.push(`${pathname}?${params.toString()}`)
+  }
+
+  // The topbar search is a property search (there's no cross-entity search
+  // API) — it hands off to the properties page.
+  const submitSearch = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const q = String(new FormData(e.currentTarget).get("q") ?? "").trim()
+    router.push(ROUTES.propertiesSearch({ q: q || undefined }))
   }
 
   return (
@@ -137,16 +148,19 @@ export function DashboardShell({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <div className="relative hidden md:block">
+            <form role="search" onSubmit={submitSearch} className="relative hidden md:block">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-secondary/40" />
               <input
-                placeholder="Search leads, properties..."
+                name="q"
+                type="search"
+                aria-label="Search properties"
+                placeholder="Search properties…"
                 className="w-64 border border-brand-border bg-card py-2 pl-9 pr-3 text-sm text-brand-secondary outline-none focus:border-brand-primary"
               />
-            </div>
+            </form>
             <button
               type="button"
-              aria-label="Notifications"
+              aria-label={unreadNotifications > 0 ? `Notifications, ${unreadNotifications} unread` : "Notifications"}
               onClick={() => setTab("notifications")}
               className="relative grid h-10 w-10 shrink-0 place-items-center border border-brand-border text-brand-secondary/70 hover:bg-brand-tertiary"
             >

@@ -20,10 +20,23 @@ export function SmoothScroll({ children }: { children: ReactNode }) {
       duration: 1.15,
       easing: (t: number) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
       smoothWheel: true,
-      smoothTouch: false,
       touchMultiplier: 1.5,
       wheelMultiplier: 1,
+      // Let anything that scrolls on its own (dialogs, sheets, dropdowns,
+      // listboxes, the command palette) keep the wheel — otherwise Lenis
+      // hijacks it and scrolls the page behind instead of the open list.
+      prevent: (node: HTMLElement) =>
+        !!node.closest(
+          '[role="dialog"],[role="alertdialog"],[role="listbox"],[role="menu"],[data-radix-popper-content-wrapper],[cmdk-list],[data-lenis-prevent]',
+        ),
     })
+
+    // Radix dialogs/sheets lock page scroll by marking <body> with
+    // data-scroll-locked; Lenis drives scroll itself and ignores that, so
+    // the page kept scrolling behind open modals. Pause it while locked.
+    const syncLock = () => (document.body.hasAttribute("data-scroll-locked") ? lenis.stop() : lenis.start())
+    const lockObserver = new MutationObserver(syncLock)
+    lockObserver.observe(document.body, { attributes: true, attributeFilter: ["data-scroll-locked"] })
 
     let rafId = 0
     function raf(time: number) {
@@ -34,6 +47,7 @@ export function SmoothScroll({ children }: { children: ReactNode }) {
 
     return () => {
       cancelAnimationFrame(rafId)
+      lockObserver.disconnect()
       lenis.destroy()
     }
   }, [])

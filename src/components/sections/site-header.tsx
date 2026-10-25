@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Rocket } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { ROUTES } from "@/lib/routes"
@@ -27,7 +27,10 @@ export function SiteHeader() {
   const [navHidden, setNavHidden] = useState(false)
   const lastScrollY = useRef(0)
   const router = useRouter()
+  const pathname = usePathname()
   const user = useNav((s) => s.user)
+  // Come back to this page after signing in, not the dashboard.
+  const loginHref = pathname && pathname !== ROUTES.home ? ROUTES.loginWithReturn(pathname) : ROUTES.login
 
   useEffect(() => {
     const onScroll = () => {
@@ -110,7 +113,7 @@ export function SiteHeader() {
             ) : (
               <button
                 type="button"
-                onClick={() => router.push(ROUTES.login)}
+                onClick={() => router.push(loginHref)}
                 className={cn(
                   "inline-flex px-3 py-2 text-sm font-semibold transition-colors duration-500",
                   scrolled
@@ -123,7 +126,10 @@ export function SiteHeader() {
             )}
             <button
               type="button"
-              onClick={() => router.push(user ? ROUTES.dashboard : ROUTES.loginWithReturn(ROUTES.dashboard))}
+              // "Start Listing" means the listing wizard, not the dashboard
+              // overview. Free users can draft; submitting is what needs a plan.
+              onClick={() => router.push(user ? ROUTES.newListing : ROUTES.loginWithReturn(ROUTES.newListing))}
+              aria-label="Start listing a property"
               className={cn(
                 "inline-flex items-center gap-2 rounded-none px-4 py-2.5 text-[12px] font-semibold uppercase tracking-[0.14em] transition-colors duration-400 sm:px-6",
                 scrolled

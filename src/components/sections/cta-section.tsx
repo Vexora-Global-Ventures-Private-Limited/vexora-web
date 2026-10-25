@@ -52,7 +52,7 @@ export function CTASection() {
           <div className="mt-12 flex flex-col items-center justify-center gap-5 sm:flex-row sm:gap-6">
             <MagneticButton
               strength={0.25}
-              onClick={() => scrollToSection("buy")}
+              onClick={() => (document.getElementById("buy") ? scrollToSection("buy") : router.push(ROUTES.properties))}
               className="group flex items-center gap-3 bg-brand-primary px-10 py-5 text-[13px] font-semibold uppercase tracking-[0.16em] text-ink-black transition-colors duration-300 hover:bg-brand-primary-light"
             >
               Begin the search
@@ -60,7 +60,8 @@ export function CTASection() {
             </MagneticButton>
             <button
               type="button"
-              onClick={() => router.push(ROUTES.membership)}
+              // Straight to the listing wizard (drafting is free; submitting needs a plan).
+              onClick={() => router.push(user ? ROUTES.newListing : ROUTES.loginWithReturn(ROUTES.newListing))}
               className="btn-ivory-line group flex items-center gap-3 px-10 py-5 text-[13px] font-semibold uppercase tracking-[0.16em]"
             >
               List your property
@@ -72,10 +73,12 @@ export function CTASection() {
         <Reveal direction="up" delay={0.4}>
           <button
             type="button"
-            onClick={() => router.push(user ? ROUTES.dashboard : ROUTES.login)}
+            // There's no advisor service behind this yet — it used to open the
+            // login screen under an "advisor" label. Be literal instead.
+            onClick={() => router.push(user ? ROUTES.dashboard : ROUTES.signup)}
             className="link-editorial mt-8 text-[13px] font-semibold uppercase tracking-[0.14em] text-white/75 transition-colors hover:text-white"
           >
-            {user ? "Go to dashboard" : "Speak with an advisor"}
+            {user ? "Go to dashboard" : "Create a free account"}
           </button>
         </Reveal>
 

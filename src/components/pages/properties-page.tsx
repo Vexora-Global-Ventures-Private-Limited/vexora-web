@@ -4,19 +4,24 @@ import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import Image from "next/image"
 import {
-  MapPin, Bed, Bath, Maximize2, BadgeCheck, Crown, Star, ArrowUpRight,
-  Search, SlidersHorizontal, ChevronDown, ArrowLeft, X, Heart,
+  MapPin, Bed, Maximize2, BadgeCheck, Crown, Star, ArrowUpRight,
+  Search, SlidersHorizontal, ChevronDown, ChevronLeft, ChevronRight, ArrowLeft, X, Heart, Globe2,
 } from "lucide-react"
 import { useRouter, usePathname, useSearchParams } from "next/navigation"
-import {
-  properties, CITIES, BHK_OPTIONS, PURPOSE_OPTIONS, AMENITIES_MASTER,
-  PRICE_RANGE_CR, AREA_RANGE_SQFT, type Priority, type Property,
-} from "@/lib/vxp-data"
+import { PRICE_RANGE_CR, type Property } from "@/lib/vxp-data"
 import { ROUTES } from "@/lib/routes"
 import { useNav } from "@/lib/nav-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
+import { crToPaise, formatCr, propertyTypeLabel, searchDocToProperty, toShortlistSnapshot, type ApiProperty } from "@/lib/api-mappers"
+import {
+  useGetActiveLocationsQuery,
+  useGetPublicConfigQuery,
+  useSearchQuery,
+  type SearchSort,
+} from "@/store/api/searchApi"
 import { UserNavMenu } from "@/components/site/user-nav-menu"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -24,53 +29,114 @@ import {
   DropdownMenuRadioItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
-const STATUSES: Property["status"][] = ["Ready to Move", "Under Construction"]
+type Segment = NonNullable<Property["segment"]>
 
-const SEGMENT_META: Record<NonNullable<Property["segment"]>, { title: string; subtitle: string; empty: string }> = {
-  "Residence": { title: "Browse Properties", subtitle: "1,84,000+ verified listings across India", empty: "No properties match your search. Try removing a filter." },
-  "Commercial": { title: "Commercial Properties", subtitle: "Office, retail and warehouse space from developers across India", empty: "No commercial listings match your search. Try removing a filter." },
-  "Land & Luxury Villa": { title: "Land & Luxury Villas", subtitle: "Premium villas and gated land parcels from India's top developers", empty: "No villas or plots match your search. Try removing a filter." },
-  "Global": { title: "Global Properties", subtitle: "Cross-border listings for developers and investors, worldwide", empty: "No global listings match your search. Try removing a filter." },
+/**
+ * Each nav vertical maps onto the API's property types. Search takes ONE
+ * `property_type`, so a segment that spans several types offers them as
+ * chips and starts on the first (Residence spans everything → "All").
+ * Global has no backing data at all — every listing is India-only today.
+ */
+const SEGMENT_META: Record<Segment, { title: string; subtitle: string; empty: string; types: string[] | null }> = {
+  "Residence": { title: "Browse Properties", subtitle: "Verified listings across India", empty: "No properties match your search. Try removing a filter.", types: null },
+  "Commercial": { title: "Commercial Properties", subtitle: "Office, retail and warehouse space across India", empty: "No commercial listings match your search. Try removing a filter.", types: ["commercial", "office", "warehouse"] },
+  "Land & Luxury Villa": { title: "Land & Luxury Villas", subtitle: "Villas and land parcels across India", empty: "No villas or plots match your search. Try removing a filter.", types: ["villa", "plot"] },
+  "Global": { title: "Global Properties", subtitle: "Cross-border listings for developers and investors", empty: "", types: [] },
 }
 
-type SortKey = "recommended" | "price-asc" | "price-desc"
-const SORT_LABEL: Record<SortKey, string> = {
-  recommended: "Recommended",
-  "price-asc": "Price: Low to High",
-  "price-desc": "Price: High to Low",
+const SORT_LABEL: Record<SearchSort, string> = {
+  relevance: "Recommended",
+  newest: "Newest first",
+  price_asc: "Price: Low to High",
+  price_desc: "Price: High to Low",
 }
+
+const PAGE_SIZE = 12
+
+const PRIORITY_ORDER: Record<string, number> = { Sponsored: 0, Featured: 1, Organic: 2 }
 
 /**
  * BR-03: the Sponsored → Featured → Organic bucket order is fixed and never
- * user-changeable. `sort` only re-orders results *within* each bucket —
- * it never lets a Featured listing outrank a Sponsored one.
+ * user-changeable — `sort` only re-orders within a bucket. The sort is sent
+ * to the API, and also re-applied to the page in hand: the MongoDB fallback
+ * search (the only one running until Meilisearch is connected) currently
+ * ignores `sort`, so without this the dropdown would visibly do nothing.
  */
-function sortWithinBuckets(list: Property[], sort: SortKey): Property[] {
-  const buckets: Record<Priority, Property[]> = { Sponsored: [], Featured: [], Organic: [] }
-  for (const p of list) buckets[p.priority].push(p)
-
-  const order = (arr: Property[]) => {
-    if (sort === "price-asc") return [...arr].sort((a, b) => a.priceCr - b.priceCr)
-    if (sort === "price-desc") return [...arr].sort((a, b) => b.priceCr - a.priceCr)
-    return [...arr].sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))
+function orderPage(list: ApiProperty[], sort: SearchSort): ApiProperty[] {
+  const cmp = (a: ApiProperty, b: ApiProperty) => {
+    if (sort === "price_asc") return a.priceCr - b.priceCr
+    if (sort === "price_desc") return b.priceCr - a.priceCr
+    return 0
   }
-
-  return [...order(buckets.Sponsored), ...order(buckets.Featured), ...order(buckets.Organic)]
+  return [...list].sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || cmp(a, b))
 }
 
-function parseNum(v: string | null, fallback: number): number {
+const QUERY_MAX = 100
+
+/** A positive integer from the URL, or the fallback (page=0/-1 crash the search API; 1.5 returns nothing). */
+function parsePositiveInt(v: string | null, fallback: number): number {
   const n = Number(v)
-  return Number.isFinite(n) && v !== null ? n : fallback
+  return v !== null && Number.isInteger(n) && n >= 1 ? n : fallback
+}
+
+function parseCr(v: string | null, fallback: number): number {
+  const n = Number(v)
+  if (v === null || v === "" || !Number.isFinite(n)) return fallback
+  return Math.min(PRICE_RANGE_CR.max, Math.max(PRICE_RANGE_CR.min, n))
+}
+
+type Filters = {
+  q: string
+  city: string
+  type: string
+  bhk: number | null
+  price: [number, number]
+  sort: SearchSort
+  page: number
+}
+
+/**
+ * The URL is the single source of truth for every filter (docs §10.1) —
+ * shareable, bookmarkable, and correct on Back/Forward. Every value is
+ * validated here, since anyone can hand-edit a query string.
+ */
+function readFilters(sp: URLSearchParams, defaultType: string): Filters {
+  const sortParam = sp.get("sort") as SearchSort | null
+  let price: [number, number] = [parseCr(sp.get("priceMin"), PRICE_RANGE_CR.min), parseCr(sp.get("priceMax"), PRICE_RANGE_CR.max)]
+  if (price[0] > price[1]) price = [price[1], price[0]]
+  return {
+    q: (sp.get("q") ?? "").slice(0, QUERY_MAX),
+    city: sp.get("city") ?? "All",
+    // API types are lowercase; older links may still carry "Apartment"-style labels.
+    type: sp.get("propertyType")?.toLowerCase() || defaultType,
+    bhk: parsePositiveInt(sp.get("bhk"), 0) || null,
+    price,
+    sort: sortParam && sortParam in SORT_LABEL ? sortParam : "relevance",
+    page: parsePositiveInt(sp.get("page"), 1),
+  }
+}
+
+function writeFilters(f: Filters, defaultType: string): string {
+  const params = new URLSearchParams()
+  if (f.q) params.set("q", f.q)
+  if (f.city !== "All") params.set("city", f.city)
+  if (f.type !== defaultType) params.set("propertyType", f.type)
+  if (f.bhk) params.set("bhk", String(f.bhk))
+  if (f.price[0] !== PRICE_RANGE_CR.min) params.set("priceMin", String(f.price[0]))
+  if (f.price[1] !== PRICE_RANGE_CR.max) params.set("priceMax", String(f.price[1]))
+  if (f.sort !== "relevance") params.set("sort", f.sort)
+  if (f.page > 1) params.set("page", String(f.page))
+  return params.toString()
 }
 
 type PropertiesPageProps = {
-  /** Which header nav vertical to scope this listing grid to. Omitted = "Residence"
-   *  (the original, general /properties page — unchanged behavior). */
-  segment?: NonNullable<Property["segment"]>
+  /** Which header nav vertical to scope this listing grid to. Omitted = "Residence". */
+  segment?: Segment
 }
 
 export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
   const meta = SEGMENT_META[segment]
+  const defaultType = meta.types?.[0] ?? "All"
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -78,104 +144,106 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
   const shortlistedIds = useShortlistStore((s) => s.shortlistedIds)
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
 
-  // Full filter grammar per the docs (07-Frontend.md §10.1):
-  // q, city, propertyType, bhk, priceMin, priceMax, areaMin, areaMax, amenities, purpose, badges, sort
-  const [query, setQuery] = useState(searchParams.get("q") ?? "")
-  const [priorityFilter, setPriorityFilter] = useState<"All" | Priority>("All")
-  const [cityFilter, setCityFilter] = useState(searchParams.get("city") ?? "All")
-  const [typeFilter, setTypeFilter] = useState<"All" | Property["type"]>(
-    (searchParams.get("propertyType") as Property["type"]) || "All",
-  )
-  const [statusFilter, setStatusFilter] = useState<"All" | Property["status"]>(
-    (searchParams.get("status") as Property["status"]) || "All",
-  )
-  const [bhkFilter, setBhkFilter] = useState<number[]>(
-    searchParams.get("bhk")?.split(",").map(Number).filter(Boolean) ?? [],
-  )
-  const [priceRange, setPriceRange] = useState<[number, number]>([
-    parseNum(searchParams.get("priceMin"), PRICE_RANGE_CR.min),
-    parseNum(searchParams.get("priceMax"), PRICE_RANGE_CR.max),
-  ])
-  const [areaRange, setAreaRange] = useState<[number, number]>([
-    parseNum(searchParams.get("areaMin"), AREA_RANGE_SQFT.min),
-    parseNum(searchParams.get("areaMax"), AREA_RANGE_SQFT.max),
-  ])
-  const [amenitiesFilter, setAmenitiesFilter] = useState<string[]>(
-    searchParams.get("amenities")?.split(",").filter(Boolean) ?? [],
-  )
-  const [purposeFilter, setPurposeFilter] = useState<"All" | Property["purpose"]>(
-    (searchParams.get("purpose") as Property["purpose"]) || "All",
-  )
-  const [verifiedOnly, setVerifiedOnly] = useState(searchParams.get("badges") === "verified")
-  const [sort, setSort] = useState<SortKey>((searchParams.get("sort") as SortKey) || "recommended")
+  const { data: config } = useGetPublicConfigQuery()
+  const { data: locations } = useGetActiveLocationsQuery()
 
-  // URL is the state (docs §10.1) — every filter change replaces the query
-  // string so results stay shareable/bookmarkable/back-button-correct.
-  useEffect(() => {
-    const t = window.setTimeout(() => {
-      const params = new URLSearchParams()
-      if (query) params.set("q", query)
-      if (cityFilter !== "All") params.set("city", cityFilter)
-      if (typeFilter !== "All") params.set("propertyType", typeFilter)
-      if (statusFilter !== "All") params.set("status", statusFilter)
-      if (bhkFilter.length) params.set("bhk", bhkFilter.join(","))
-      if (priceRange[0] !== PRICE_RANGE_CR.min) params.set("priceMin", String(priceRange[0]))
-      if (priceRange[1] !== PRICE_RANGE_CR.max) params.set("priceMax", String(priceRange[1]))
-      if (areaRange[0] !== AREA_RANGE_SQFT.min) params.set("areaMin", String(areaRange[0]))
-      if (areaRange[1] !== AREA_RANGE_SQFT.max) params.set("areaMax", String(areaRange[1]))
-      if (amenitiesFilter.length) params.set("amenities", amenitiesFilter.join(","))
-      if (purposeFilter !== "All") params.set("purpose", purposeFilter)
-      if (verifiedOnly) params.set("badges", "verified")
-      if (sort !== "recommended") params.set("sort", sort)
-      const qs = params.toString()
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
-    }, 300)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, cityFilter, typeFilter, statusFilter, bhkFilter, priceRange, areaRange, amenitiesFilter, purposeFilter, verifiedOnly, sort])
+  const urlFilters = readFilters(searchParams, defaultType)
 
-  const toggleBhk = (n: number) =>
-    setBhkFilter((prev) => (prev.includes(n) ? prev.filter((v) => v !== n) : [...prev, n]))
-  const toggleAmenity = (a: string) =>
-    setAmenitiesFilter((prev) => (prev.includes(a) ? prev.filter((v) => v !== a) : [...prev, a]))
+  // City picker sourced from the Location Master (search itself never
+  // validates `city`, and matches it case-sensitively — "mumbai" finds
+  // nothing). Listings store the district-level name ("Mumbai"), so
+  // district + city entries are both offered.
+  const cityOptions = useMemo(() => {
+    const names = (locations ?? []).filter((l) => l.type === "district" || l.type === "city").map((l) => l.name)
+    return Array.from(new Set(names)).sort()
+  }, [locations])
+  const typeOptions = meta.types ?? config?.allowedPropertyTypes ?? []
+  const bhkOptions = config?.allowedBhkValues ?? []
 
-  const activeFilterCount =
-    [cityFilter, typeFilter, statusFilter, purposeFilter].filter((v) => v !== "All").length +
-    (bhkFilter.length ? 1 : 0) +
-    (amenitiesFilter.length ? 1 : 0) +
-    (verifiedOnly ? 1 : 0) +
-    (priceRange[0] !== PRICE_RANGE_CR.min || priceRange[1] !== PRICE_RANGE_CR.max ? 1 : 0) +
-    (areaRange[0] !== AREA_RANGE_SQFT.min || areaRange[1] !== AREA_RANGE_SQFT.max ? 1 : 0)
+  // Canonicalise hand-typed / old links: city case-insensitively onto a
+  // known name, unknown property types back to the default.
+  const canonicalCity =
+    urlFilters.city === "All" ? "All" : cityOptions.find((c) => c.toLowerCase() === urlFilters.city.toLowerCase()) ?? urlFilters.city
+  const typeKnown = urlFilters.type === "All" ? !meta.types : typeOptions.length === 0 || typeOptions.includes(urlFilters.type)
+  const filters: Filters = { ...urlFilters, city: canonicalCity, type: typeKnown ? urlFilters.type : defaultType }
 
-  const clearFilters = () => {
-    setCityFilter("All")
-    setTypeFilter("All")
-    setStatusFilter("All")
-    setBhkFilter([])
-    setPriceRange([PRICE_RANGE_CR.min, PRICE_RANGE_CR.max])
-    setAreaRange([AREA_RANGE_SQFT.min, AREA_RANGE_SQFT.max])
-    setAmenitiesFilter([])
-    setPurposeFilter("All")
-    setVerifiedOnly(false)
+  // Only one filter changes per interaction; any change except paging goes back to page 1.
+  const update = (patch: Partial<Filters>) => {
+    const next = { ...filters, page: 1, ...patch }
+    const qs = writeFilters(next, defaultType)
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
   }
 
-  const filtered = useMemo(() => {
-    const list = properties
-      .filter((p) => (p.segment ?? "Residence") === segment)
-      .filter((p) => priorityFilter === "All" || p.priority === priorityFilter)
-      .filter((p) => cityFilter === "All" || p.city === cityFilter)
-      .filter((p) => typeFilter === "All" || p.type === typeFilter)
-      .filter((p) => statusFilter === "All" || p.status === statusFilter)
-      .filter((p) => purposeFilter === "All" || p.purpose === purposeFilter)
-      .filter((p) => bhkFilter.length === 0 || bhkFilter.some((n) => (n >= 5 ? p.beds >= 5 : p.beds === n)))
-      .filter((p) => p.priceCr >= priceRange[0] && p.priceCr <= priceRange[1])
-      .filter((p) => p.areaSqft >= areaRange[0] && p.areaSqft <= areaRange[1])
-      .filter((p) => amenitiesFilter.every((a) => p.amenities.includes(a)))
-      .filter((p) => !verifiedOnly || p.tags.includes("Verified"))
-      .filter((p) => p.title.toLowerCase().includes(query.toLowerCase()) || p.location.toLowerCase().includes(query.toLowerCase()))
+  // Search box: typed text is local, pushed to the URL 350ms after typing
+  // stops. When the URL's q changes from elsewhere (Back/Forward), the box
+  // follows it — but never overwrites what's being typed right now.
+  const [query, setQuery] = useState(filters.q)
+  const [lastUrlQ, setLastUrlQ] = useState(filters.q)
+  if (filters.q !== lastUrlQ) {
+    setLastUrlQ(filters.q)
+    if (filters.q !== query.trim()) setQuery(filters.q)
+  }
+  useEffect(() => {
+    const trimmed = query.trim()
+    if (trimmed === filters.q) return
+    const t = window.setTimeout(() => update({ q: trimmed }), 350)
+    return () => window.clearTimeout(t)
+  }, [query, filters.q])
 
-    return sortWithinBuckets(list, sort)
-  }, [segment, priorityFilter, cityFilter, typeFilter, statusFilter, purposeFilter, bhkFilter, priceRange, areaRange, amenitiesFilter, verifiedOnly, query, sort])
+  // Budget slider: dragging only moves the local value; the search runs once
+  // on release (onValueCommit) instead of firing a request per pixel.
+  const [draftPrice, setDraftPrice] = useState<[number, number]>(filters.price)
+  const [lastUrlPrice, setLastUrlPrice] = useState(filters.price.join("-"))
+  if (filters.price.join("-") !== lastUrlPrice) {
+    setLastUrlPrice(filters.price.join("-"))
+    setDraftPrice(filters.price)
+  }
+
+  const isGlobal = segment === "Global"
+  const { data, isFetching, isError, refetch } = useSearchQuery(
+    {
+      q: filters.q || undefined,
+      city: filters.city !== "All" ? filters.city : undefined,
+      property_type: filters.type !== "All" ? filters.type : undefined,
+      bhk: filters.bhk ?? undefined,
+      price_min: filters.price[0] > PRICE_RANGE_CR.min ? crToPaise(filters.price[0]) : undefined,
+      // The slider's top end means "and above" — no upper bound sent.
+      price_max: filters.price[1] < PRICE_RANGE_CR.max ? crToPaise(filters.price[1]) : undefined,
+      sort: filters.sort,
+      page: filters.page,
+      limit: PAGE_SIZE,
+    },
+    { skip: isGlobal },
+  )
+
+  const results = useMemo(() => orderPage((data?.hits ?? []).map(searchDocToProperty), filters.sort), [data, filters.sort])
+  const totalPages = data?.totalPages ?? 0
+  // A bookmarked page past the end (results shrank since) — offer page 1 instead of a dead empty state.
+  const pageOutOfRange = !!data && filters.page > 1 && filters.page > totalPages
+
+  const goToPage = (page: number) => {
+    update({ page })
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+
+  const activeFilterCount =
+    (filters.city !== "All" ? 1 : 0) +
+    (filters.type !== defaultType ? 1 : 0) +
+    (filters.bhk ? 1 : 0) +
+    (filters.price[0] !== PRICE_RANGE_CR.min || filters.price[1] !== PRICE_RANGE_CR.max ? 1 : 0)
+
+  const clearFilters = (alsoQuery = false) => {
+    if (alsoQuery) setQuery("")
+    update({
+      city: "All",
+      type: defaultType,
+      bhk: null,
+      price: [PRICE_RANGE_CR.min, PRICE_RANGE_CR.max],
+      ...(alsoQuery ? { q: "" } : {}),
+    })
+  }
+
+  const openListing = (p: ApiProperty) => router.push(ROUTES.propertyDetail(p.slug))
 
   return (
     <div className="min-h-screen bg-brand-surface">
@@ -186,7 +254,7 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
             <button
               onClick={() => router.push(ROUTES.home)}
               className="grid h-10 w-10 place-items-center border border-brand-border-light text-brand-secondary hover:bg-brand-surface"
-              aria-label="Back"
+              aria-label="Home"
             >
               <ArrowLeft className="h-4 w-4" />
             </button>
@@ -199,11 +267,11 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
             </div>
           </div>
           {user ? (
-            <UserNavMenu user={user} className="hidden text-brand-secondary sm:flex" />
+            <UserNavMenu user={user} className="text-brand-secondary" />
           ) : (
             <button
-              onClick={() => router.push(ROUTES.login)}
-              className="hidden border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface sm:block"
+              onClick={() => router.push(ROUTES.loginWithReturn(`${pathname}${searchParams.toString() ? `?${searchParams}` : ""}`))}
+              className="shrink-0 border border-brand-border-light px-4 py-2 text-sm font-bold text-brand-secondary hover:bg-brand-surface"
             >
               Log in
             </button>
@@ -211,269 +279,317 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
         </div>
       </header>
 
-      {/* Search + filters */}
-      <div className="border-b border-brand-border-light bg-card">
-        <div className="mx-auto max-w-7xl px-6 py-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-secondary/40" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by location, project, or keyword..."
-                className="w-full border border-brand-border-light bg-card py-3 pl-10 pr-4 text-sm outline-none focus:border-brand-primary"
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {(["All", "Sponsored", "Featured", "Organic"] as const).map((f) => (
-                <button
-                  key={f}
-                  onClick={() => setPriorityFilter(f)}
-                  className={
-                    "px-3 py-2 text-xs font-bold transition-colors " +
-                    (priorityFilter === f
-                      ? "bg-ink-black text-brand-primary"
-                      : "border border-brand-border-light bg-card text-brand-secondary/65 hover:bg-brand-surface")
-                  }
-                >
-                  {f}
-                </button>
-              ))}
+      {isGlobal ? (
+        <div className="mx-auto max-w-3xl px-6 py-20 text-center">
+          <Globe2 className="mx-auto h-12 w-12 text-brand-primary-dark" />
+          <h2 className="mt-4 font-serif text-3xl font-bold text-brand-secondary">Global listings are coming soon</h2>
+          <p className="mt-3 text-sm text-brand-secondary/65">
+            VXP is India-only today. Cross-border listings for developers and investors will open here once they launch.
+          </p>
+          <button
+            onClick={() => router.push(ROUTES.properties)}
+            className="btn-gold relative mt-6 overflow-hidden px-6 py-3 text-sm font-bold"
+          >
+            <span className="relative z-10">Browse India listings</span>
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Search + filters */}
+          <div className="border-b border-brand-border-light bg-card">
+            <div className="mx-auto max-w-7xl px-6 py-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-brand-secondary/40" />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value.slice(0, QUERY_MAX))}
+                    maxLength={QUERY_MAX}
+                    aria-label="Search listings"
+                    type="search"
+                    placeholder="Search by location, project, or keyword..."
+                    className="w-full border border-brand-border-light bg-card py-3 pl-10 pr-4 text-sm outline-none focus:border-brand-primary"
+                  />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Type chips — the segment's own types (or every configured type). */}
+                  {(meta.types ? meta.types : ["All", ...typeOptions]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => update({ type: t })}
+                      aria-pressed={filters.type === t}
+                      className={
+                        "px-3 py-2 text-xs font-bold transition-colors " +
+                        (filters.type === t
+                          ? "bg-ink-black text-brand-primary"
+                          : "border border-brand-border-light bg-card text-brand-secondary/65 hover:bg-brand-surface")
+                      }
+                    >
+                      {t === "All" ? "All" : propertyTypeLabel(t)}
+                    </button>
+                  ))}
 
-              {/* Filters popover — the full docs grammar: city, type, BHK, price, area, amenities, purpose, badges */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <button className="relative flex items-center gap-1.5 border border-brand-border-light bg-card px-3 py-2 text-xs font-bold text-brand-secondary/65 hover:bg-brand-surface">
-                    <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
-                    {activeFilterCount > 0 && (
-                      <span className="ml-0.5 grid h-4 w-4 place-items-center rounded-full bg-brand-primary text-[10px] font-bold text-ink-black">
-                        {activeFilterCount}
-                      </span>
-                    )}
-                  </button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="max-h-[80vh] w-96 overflow-y-auto border-brand-border-light p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase tracking-wide text-brand-secondary/55">Filters</span>
-                    {activeFilterCount > 0 && (
-                      <button onClick={clearFilters} className="flex items-center gap-1 text-[11px] font-bold text-brand-primary-dark hover:underline">
-                        <X className="h-3 w-3" /> Clear all
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button className="relative flex items-center gap-1.5 border border-brand-border-light bg-card px-3 py-2 text-xs font-bold text-brand-secondary/65 hover:bg-brand-surface">
+                        <SlidersHorizontal className="h-3.5 w-3.5" /> Filters
+                        {activeFilterCount > 0 && (
+                          <span className="ml-0.5 grid h-4 w-4 place-items-center rounded-full bg-brand-primary text-[10px] font-bold text-ink-black">
+                            {activeFilterCount}
+                          </span>
+                        )}
                       </button>
-                    )}
-                  </div>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="max-h-[80vh] w-96 overflow-y-auto border-brand-border-light p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wide text-brand-secondary/55">Filters</span>
+                        {activeFilterCount > 0 && (
+                          <button onClick={() => clearFilters()} className="flex items-center gap-1 text-[11px] font-bold text-brand-primary-dark hover:underline">
+                            <X className="h-3 w-3" /> Clear all
+                          </button>
+                        )}
+                      </div>
 
-                  {/* City */}
-                  <FilterSection label="City">
-                    {(["All", ...CITIES] as const).map((c) => (
-                      <FilterChip key={c} active={cityFilter === c} onClick={() => setCityFilter(c)}>{c}</FilterChip>
-                    ))}
-                  </FilterSection>
+                      <FilterSection label="City">
+                        {["All", ...cityOptions, ...(filters.city !== "All" && !cityOptions.includes(filters.city) ? [filters.city] : [])].map((c) => (
+                          <FilterChip key={c} active={filters.city === c} onClick={() => update({ city: c })}>{c}</FilterChip>
+                        ))}
+                      </FilterSection>
 
-                  {/* Property type */}
-                  <FilterSection label="Property type">
-                    {(["All", "Apartment", "Villa", "Penthouse", "Commercial", "Plot"] as const).map((t) => (
-                      <FilterChip key={t} active={typeFilter === t} onClick={() => setTypeFilter(t)}>{t}</FilterChip>
-                    ))}
-                  </FilterSection>
+                      <FilterSection label="BHK">
+                        <FilterChip active={filters.bhk === null} onClick={() => update({ bhk: null })}>Any</FilterChip>
+                        {bhkOptions.map((n) => (
+                          <FilterChip key={n} active={filters.bhk === n} onClick={() => update({ bhk: n })}>
+                            {n} BHK
+                          </FilterChip>
+                        ))}
+                      </FilterSection>
 
-                  {/* BHK — multi-select, 5 means 5+ */}
-                  <FilterSection label="BHK">
-                    {BHK_OPTIONS.map((n) => (
-                      <FilterChip key={n} active={bhkFilter.includes(n)} onClick={() => toggleBhk(n)}>
-                        {n}{n === 5 ? "+" : ""} BHK
-                      </FilterChip>
-                    ))}
-                  </FilterSection>
-
-                  {/* Purpose */}
-                  <FilterSection label="Purpose">
-                    {(["All", ...PURPOSE_OPTIONS] as const).map((p) => (
-                      <FilterChip key={p} active={purposeFilter === p} onClick={() => setPurposeFilter(p)}>{p}</FilterChip>
-                    ))}
-                  </FilterSection>
-
-                  {/* Status */}
-                  <FilterSection label="Status">
-                    {(["All", ...STATUSES] as const).map((s) => (
-                      <FilterChip key={s} active={statusFilter === s} onClick={() => setStatusFilter(s)}>{s}</FilterChip>
-                    ))}
-                  </FilterSection>
-
-                  {/* Price range slider */}
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/45">Budget</p>
-                      <span className="text-[11px] font-bold text-brand-secondary/70">
-                        ₹ {priceRange[0]} – {priceRange[1] >= PRICE_RANGE_CR.max ? `${PRICE_RANGE_CR.max}+` : priceRange[1]} Cr
-                      </span>
-                    </div>
-                    <Slider
-                      className="mt-3"
-                      min={PRICE_RANGE_CR.min}
-                      max={PRICE_RANGE_CR.max}
-                      step={0.25}
-                      value={priceRange}
-                      onValueChange={(v) => setPriceRange([v[0], v[1]])}
-                    />
-                  </div>
-
-                  {/* Area range slider */}
-                  <div className="mt-5">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/45">Area (sq.ft)</p>
-                      <span className="text-[11px] font-bold text-brand-secondary/70">
-                        {areaRange[0].toLocaleString()} – {areaRange[1].toLocaleString()}
-                      </span>
-                    </div>
-                    <Slider
-                      className="mt-3"
-                      min={AREA_RANGE_SQFT.min}
-                      max={AREA_RANGE_SQFT.max}
-                      step={100}
-                      value={areaRange}
-                      onValueChange={(v) => setAreaRange([v[0], v[1]])}
-                    />
-                  </div>
-
-                  {/* Amenities */}
-                  <FilterSection label="Amenities">
-                    {AMENITIES_MASTER.map((a) => (
-                      <FilterChip key={a} active={amenitiesFilter.includes(a)} onClick={() => toggleAmenity(a)}>{a}</FilterChip>
-                    ))}
-                  </FilterSection>
-
-                  {/* Badges */}
-                  <div className="mt-4">
-                    <FilterChip active={verifiedOnly} onClick={() => setVerifiedOnly((v) => !v)}>
-                      <BadgeCheck className="mr-1 inline h-3 w-3" /> Verified only
-                    </FilterChip>
-                  </div>
-                </PopoverContent>
-              </Popover>
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-brand-secondary/45">Budget</p>
+                          <span className="text-[11px] font-bold text-brand-secondary/70">
+                            {formatCr(draftPrice[0]) === "Price on request" ? "₹ 0" : formatCr(draftPrice[0])} –{" "}
+                            {draftPrice[1] >= PRICE_RANGE_CR.max ? `${formatCr(PRICE_RANGE_CR.max)}+` : formatCr(draftPrice[1])}
+                          </span>
+                        </div>
+                        <Slider
+                          className="mt-3"
+                          min={PRICE_RANGE_CR.min}
+                          max={PRICE_RANGE_CR.max}
+                          step={0.25}
+                          value={draftPrice}
+                          aria-label="Budget range"
+                          onValueChange={(v) => setDraftPrice([v[0], v[1]])}
+                          onValueCommit={(v) => update({ price: [v[0], v[1]] })}
+                        />
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Results */}
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        <div className="mb-5 flex items-center justify-between">
-          <p className="text-sm text-brand-secondary/65">
-            Showing <span className="font-bold text-brand-secondary">{filtered.length}</span> of 1,84,000+ listings
-          </p>
+          {/* Results */}
+          <div className="mx-auto max-w-7xl px-6 py-8">
+            <div className="mb-5 flex items-center justify-between">
+              <p className="text-sm text-brand-secondary/65">
+                {data ? (
+                  <>
+                    <span className="font-bold text-brand-secondary">{data.total.toLocaleString("en-IN")}</span>{" "}
+                    listing{data.total === 1 ? "" : "s"} found
+                  </>
+                ) : (
+                  "Searching…"
+                )}
+              </p>
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-1 text-xs font-bold text-brand-secondary/65 hover:text-brand-secondary">
-                Sort: {SORT_LABEL[sort]} <ChevronDown className="h-3 w-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuRadioGroup value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-                {(Object.keys(SORT_LABEL) as SortKey[]).map((key) => (
-                  <DropdownMenuRadioItem key={key} value={key}>
-                    {SORT_LABEL[key]}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-1 text-xs font-bold text-brand-secondary/65 hover:text-brand-secondary">
+                    Sort: {SORT_LABEL[filters.sort]} <ChevronDown className="h-3 w-3" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuRadioGroup value={filters.sort} onValueChange={(v) => update({ sort: v as SearchSort })}>
+                    {(Object.keys(SORT_LABEL) as SearchSort[]).map((key) => (
+                      <DropdownMenuRadioItem key={key} value={key}>
+                        {SORT_LABEL[key]}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
 
-        <motion.div
-          initial="hidden"
-          animate="visible"
-          variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.08 } } }}
-          className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3"
-        >
-          {filtered.map((p) => (
-            <motion.div
-              key={p.id}
-              variants={{
-                hidden: { opacity: 0, y: 30 },
-                visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const } },
-              }}
-              whileHover={{ y: -6 }}
-              onClick={() => router.push(ROUTES.propertyDetail(p.id))}
-              data-cursor="view"
-              className={
-                "group relative cursor-pointer overflow-hidden bg-card transition-shadow hover:shadow-2xl hover:shadow-brand-primary/15 " +
-                (p.priority === "Sponsored" ? "ring-2 ring-brand-primary" : "ring-1 ring-brand-border-light hover:ring-brand-primary/40")
-              }
-            >
-              <div className="relative aspect-[4/3] overflow-hidden">
-                <Image src={p.image} alt={p.title} fill sizes="(min-width: 1024px) 33vw, 50vw" className="object-cover transition-transform duration-500 group-hover:scale-105" />
-                <div className="absolute inset-0 bg-gradient-to-t from-ink-black/50 to-transparent" />
-                <div className="absolute inset-x-3 top-3 flex gap-1.5">
-                  {p.priority === "Sponsored" && (
-                    <Badge className="bg-gradient-to-r from-brand-primary to-brand-primary-dark text-ink-black hover:from-brand-primary hover:to-brand-primary-dark">
-                      <Crown className="mr-1 h-3 w-3" /> Sponsored
-                    </Badge>
-                  )}
-                  {p.priority === "Featured" && (
-                    <Badge className="bg-ink-black text-brand-primary hover:bg-ink-black">
-                      <Star className="mr-1 h-3 w-3 fill-brand-primary" /> Featured
-                    </Badge>
-                  )}
-                  {p.tags.includes("Verified") && (
-                    <Badge className="bg-card/95 text-brand-secondary hover:bg-card/95">
-                      <BadgeCheck className="mr-1 h-3 w-3 text-brand-primary-dark" /> Verified
-                    </Badge>
-                  )}
-                </div>
-                <div className="absolute bottom-3 left-3">
-                  <span className="rounded-full bg-card/95 px-2.5 py-1 text-[11px] font-semibold uppercase text-brand-secondary">
-                    {p.status}
-                  </span>
-                </div>
-                <button
-                  onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id) }}
-                  aria-pressed={shortlistedIds.includes(p.id)}
-                  aria-label={shortlistedIds.includes(p.id) ? "Remove from shortlist" : "Add to shortlist"}
-                  className={
-                    "absolute bottom-3 right-3 grid h-9 w-9 place-items-center rounded-full backdrop-blur-sm hover:bg-card " +
-                    (shortlistedIds.includes(p.id) ? "bg-card text-brand-primary-dark" : "bg-card/85 text-brand-secondary/70")
-                  }
-                >
-                  <Heart className={"h-4 w-4" + (shortlistedIds.includes(p.id) ? " fill-brand-primary-dark" : "")} />
+            {isError ? (
+              <div className="border border-brand-border-light bg-card p-12 text-center">
+                <p className="text-sm text-brand-secondary/65">Search is unavailable right now.</p>
+                <button onClick={() => refetch()} className="mt-3 text-sm font-bold text-brand-primary-dark hover:underline">
+                  Try again
                 </button>
               </div>
-              <div className="p-5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-primary-dark">{p.type}</span>
-                <h3 className="mt-1.5 line-clamp-2 font-serif text-lg font-bold text-brand-secondary">{p.title}</h3>
-                <div className="mt-2 flex items-center gap-1 text-sm text-brand-secondary/60">
-                  <MapPin className="h-3.5 w-3.5 text-brand-primary-dark" /> <span className="truncate">{p.location}</span>
-                </div>
-                <div className="mt-4 flex items-center gap-4 text-sm text-brand-secondary/75">
-                  <span className="flex items-center gap-1.5"><Bed className="h-4 w-4 text-brand-primary-dark" /><b>{p.beds}</b> Beds</span>
-                  <span className="flex items-center gap-1.5"><Bath className="h-4 w-4 text-brand-primary-dark" /><b>{p.baths}</b> Baths</span>
-                  <span className="flex items-center gap-1.5"><Maximize2 className="h-4 w-4 text-brand-primary-dark" /><b>{p.area}</b></span>
-                </div>
-                <div className="mt-5 flex items-end justify-between border-t border-brand-border-light pt-4">
-                  <div>
-                    <div className="font-serif text-xl font-bold text-brand-secondary">{p.price}</div>
-                    {p.pricePerSqft && <div className="text-xs text-brand-secondary/50">{p.pricePerSqft}</div>}
+            ) : !data ? (
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="bg-card ring-1 ring-brand-border-light">
+                    <Skeleton className="aspect-[4/3] w-full" />
+                    <div className="space-y-2 p-5">
+                      <Skeleton className="h-4 w-1/3" />
+                      <Skeleton className="h-5 w-4/5" />
+                      <Skeleton className="h-4 w-1/2" />
+                    </div>
                   </div>
-                  <span className="flex items-center gap-1 bg-ink-black px-4 py-2 text-xs font-bold text-brand-primary">
-                    View <ArrowUpRight className="h-3.5 w-3.5" />
-                  </span>
-                </div>
+                ))}
               </div>
-            </motion.div>
-          ))}
-        </motion.div>
+            ) : (
+              <motion.div
+                key={`${filters.page}-${results.length}`}
+                initial="hidden"
+                animate="visible"
+                variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.06 } } }}
+                className={"grid grid-cols-1 gap-6 transition-opacity sm:grid-cols-2 lg:grid-cols-3" + (isFetching ? " opacity-60" : "")}
+              >
+                {results.map((p) => {
+                  const saved = shortlistedIds.includes(p.id)
+                  return (
+                    <motion.div
+                      key={p.id}
+                      variants={{
+                        hidden: { opacity: 0, y: 30 },
+                        visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] as const } },
+                      }}
+                      whileHover={{ y: -6 }}
+                      onClick={() => openListing(p)}
+                      onKeyDown={(e) => {
+                        if (e.target !== e.currentTarget) return
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          openListing(p)
+                        }
+                      }}
+                      role="link"
+                      tabIndex={0}
+                      aria-label={`${p.title}, ${p.price}, ${p.location}`}
+                      data-cursor="view"
+                      className={
+                        "group relative cursor-pointer overflow-hidden bg-card transition-shadow hover:shadow-2xl hover:shadow-brand-primary/15 " +
+                        (p.priority === "Sponsored" ? "ring-2 ring-brand-primary" : "ring-1 ring-brand-border-light hover:ring-brand-primary/40")
+                      }
+                    >
+                      <div className="relative aspect-[4/3] overflow-hidden">
+                        <Image src={p.image} alt={p.title} fill sizes="(min-width: 1024px) 33vw, 50vw" className="object-cover transition-transform duration-500 group-hover:scale-105" />
+                        <div className="absolute inset-0 bg-gradient-to-t from-ink-black/50 to-transparent" />
+                        <div className="absolute inset-x-3 top-3 flex gap-1.5">
+                          {p.priority === "Sponsored" && (
+                            <Badge className="bg-gradient-to-r from-brand-primary to-brand-primary-dark text-ink-black hover:from-brand-primary hover:to-brand-primary-dark">
+                              <Crown className="mr-1 h-3 w-3" /> Sponsored
+                            </Badge>
+                          )}
+                          {p.priority === "Featured" && (
+                            <Badge className="bg-ink-black text-brand-primary hover:bg-ink-black">
+                              <Star className="mr-1 h-3 w-3 fill-brand-primary" /> Featured
+                            </Badge>
+                          )}
+                          {p.badges.length > 0 && (
+                            <Badge className="bg-card/95 text-brand-secondary hover:bg-card/95">
+                              <BadgeCheck className="mr-1 h-3 w-3 text-brand-primary-dark" /> Verified
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="absolute bottom-3 left-3">
+                          <span className="rounded-full bg-card/95 px-2.5 py-1 text-[11px] font-semibold uppercase text-brand-secondary">
+                            For {p.purpose}
+                          </span>
+                        </div>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id, toShortlistSnapshot(p)) }}
+                          aria-pressed={saved}
+                          aria-label={saved ? "Remove from shortlist" : "Add to shortlist"}
+                          className={
+                            "absolute bottom-3 right-3 grid h-9 w-9 place-items-center rounded-full backdrop-blur-sm hover:bg-card " +
+                            (saved ? "bg-card text-brand-primary-dark" : "bg-card/85 text-brand-secondary/70")
+                          }
+                        >
+                          <Heart className={"h-4 w-4" + (saved ? " fill-brand-primary-dark" : "")} />
+                        </button>
+                      </div>
+                      <div className="p-5">
+                        <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-brand-primary-dark">{p.type}</span>
+                        <h3 className="mt-1.5 line-clamp-2 font-serif text-lg font-bold text-brand-secondary">{p.title}</h3>
+                        <div className="mt-2 flex items-center gap-1 text-sm text-brand-secondary/60">
+                          <MapPin className="h-3.5 w-3.5 text-brand-primary-dark" /> <span className="truncate">{p.location}</span>
+                        </div>
+                        <div className="mt-4 flex items-center gap-4 text-sm text-brand-secondary/75">
+                          {p.beds > 0 && (
+                            <span className="flex items-center gap-1.5"><Bed className="h-4 w-4 text-brand-primary-dark" /><b>{p.beds}</b> BHK</span>
+                          )}
+                          <span className="flex items-center gap-1.5"><Maximize2 className="h-4 w-4 text-brand-primary-dark" /><b>{p.area}</b></span>
+                        </div>
+                        <div className="mt-5 flex items-end justify-between border-t border-brand-border-light pt-4">
+                          <div>
+                            <div className="font-serif text-xl font-bold text-brand-secondary">{p.price}</div>
+                            {p.pricePerSqft && <div className="text-xs text-brand-secondary/50">{p.pricePerSqft}</div>}
+                          </div>
+                          <span className="flex items-center gap-1 bg-ink-black px-4 py-2 text-xs font-bold text-brand-primary">
+                            View <ArrowUpRight className="h-3.5 w-3.5" />
+                          </span>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )
+                })}
+              </motion.div>
+            )}
 
-        {filtered.length === 0 && (
-          <div className="border border-brand-border-light bg-card p-12 text-center">
-            <p className="text-sm text-brand-secondary/65">{meta.empty}</p>
-            {activeFilterCount > 0 && (
-              <button onClick={clearFilters} className="mt-3 text-sm font-bold text-brand-primary-dark hover:underline">
-                Clear all filters
-              </button>
+            {data && results.length === 0 && pageOutOfRange && (
+              <div className="border border-brand-border-light bg-card p-12 text-center">
+                <p className="text-sm text-brand-secondary/65">There&apos;s nothing on page {filters.page} any more.</p>
+                <button onClick={() => goToPage(1)} className="mt-3 text-sm font-bold text-brand-primary-dark hover:underline">
+                  Go to page 1
+                </button>
+              </div>
+            )}
+
+            {data && results.length === 0 && !pageOutOfRange && (
+              <div className="border border-brand-border-light bg-card p-12 text-center">
+                <p className="text-sm text-brand-secondary/65">{meta.empty}</p>
+                {(activeFilterCount > 0 || filters.q) && (
+                  <button
+                    onClick={() => clearFilters(true)}
+                    className="mt-3 text-sm font-bold text-brand-primary-dark hover:underline"
+                  >
+                    Clear search &amp; filters
+                  </button>
+                )}
+              </div>
+            )}
+
+            {totalPages > 1 && (
+              <div className="mt-10 flex items-center justify-center gap-3">
+                <button
+                  onClick={() => goToPage(Math.max(1, filters.page - 1))}
+                  disabled={filters.page <= 1 || isFetching}
+                  className="flex items-center gap-1 border border-brand-border-light bg-card px-4 py-2 text-xs font-bold text-brand-secondary disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" /> Previous
+                </button>
+                <span className="text-xs font-semibold text-brand-secondary/65">
+                  Page {filters.page} of {totalPages}
+                </span>
+                <button
+                  onClick={() => goToPage(Math.min(totalPages, filters.page + 1))}
+                  disabled={filters.page >= totalPages || isFetching}
+                  className="flex items-center gap-1 border border-brand-border-light bg-card px-4 py-2 text-xs font-bold text-brand-secondary disabled:opacity-40"
+                >
+                  Next <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }
@@ -491,6 +607,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={
         "px-2.5 py-1.5 text-[11px] font-bold transition-colors " +
         (active ? "bg-ink-black text-brand-primary" : "border border-brand-border-light bg-card text-brand-secondary/65 hover:bg-brand-surface")
