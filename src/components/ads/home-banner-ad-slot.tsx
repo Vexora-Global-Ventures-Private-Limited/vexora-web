@@ -1,51 +1,50 @@
 "use client"
 
 import { ArrowUpRight, Megaphone } from "lucide-react"
-import { useRouter } from "next/navigation"
-import { myAds } from "@/lib/dashboard-data"
-import { projects } from "@/lib/projects-data"
-import { ROUTES } from "@/lib/routes"
+import { HOMEPAGE_IMAGES } from "@/lib/homepage-images"
+import { adClickHref, useGetHomeBannerQuery, type Ad, type AdCreative } from "@/store/api/adsApi"
+
+/** The served banner may carry its creatives; the image is a hosted URL while Cloudinary is in demo mode. */
+export function bannerImage(ad: Ad): string {
+  const creative = (ad.creatives as AdCreative[] | undefined)?.[0]
+  const src = creative?.cloudinaryPublicId
+  return src && /^https?:\/\//.test(src) ? src : HOMEPAGE_IMAGES.heroLaunch
+}
 
 /**
- * "Home Banner" ad slot — VXP home page, top fold (the flagship placement in
- * the 5-type ad program). Matches the CityAdSlot honesty rule exactly: only
- * ever renders a real, currently-Live Home Banner ad; when there isn't one,
- * it renders nothing at all rather than an empty placeholder strip.
+ * "Home Banner" ad slot — GET /ad-serving/home-banner (public; picks a
+ * city-personalized banner when logged in). Renders nothing when there's no
+ * active campaign (`ad: null` is the normal case), never a fake sponsor.
+ * Every render here counts as a real impression server-side; the
+ * click-through is a 302 from the API, so it's a plain link.
  */
 export function HomeBannerAdSlot() {
-  const router = useRouter()
-  const ad = myAds.find((a) => a.type === "Home Banner" && a.status === "Live")
+  const { data: ad } = useGetHomeBannerQuery()
   if (!ad) return null
+  return <BannerCard ad={ad} />
+}
 
-  const headlinePrefix = ad.headline.split(" — ")[0].trim()
-  const matchedProject = projects.find((p) => p.name.startsWith(headlinePrefix))
-  const destination = matchedProject ? ROUTES.projectDetail(matchedProject.id) : ROUTES.projects
-
+export function BannerCard({ ad }: { ad: Ad }) {
   return (
     <section aria-label="Sponsored" className="relative overflow-hidden border-y border-brand-primary/25">
-      <button
-        onClick={() => router.push(destination)}
+      <a
+        href={adClickHref(ad._id)}
+        target="_blank"
+        rel="noopener noreferrer sponsored"
         className="group relative mx-auto flex w-full max-w-[90rem] items-center justify-between gap-4 px-6 py-4 text-left sm:px-10 lg:px-16"
       >
-        <img
-          src={ad.bannerImage}
-          alt=""
-          className="absolute inset-0 h-full w-full object-cover"
-        />
+        <img src={bannerImage(ad)} alt="" className="absolute inset-0 h-full w-full object-cover" />
         <div className="absolute inset-0 bg-gradient-to-r from-brand-secondary via-brand-secondary/85 to-brand-secondary/40" />
         <div className="relative flex min-w-0 items-center gap-4">
           <span className="flex shrink-0 items-center gap-1.5 bg-brand-primary px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-ink-black">
             <Megaphone className="h-3 w-3" /> Sponsored
           </span>
-          <div className="min-w-0">
-            <div className="truncate font-serif text-lg font-bold text-white">{ad.headline}</div>
-            <div className="text-xs text-white/50">{ad.placement}</div>
-          </div>
+          {ad.targetCity && <div className="truncate text-xs text-white/60">{ad.targetCity}</div>}
         </div>
         <span className="relative flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-brand-primary group-hover:text-brand-primary-light">
           Explore <ArrowUpRight className="h-4 w-4" />
         </span>
-      </button>
+      </a>
     </section>
   )
 }

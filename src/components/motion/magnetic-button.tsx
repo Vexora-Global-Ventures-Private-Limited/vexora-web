@@ -54,6 +54,8 @@ export function MagneticButton({
       onMouseLeave={handleLeave}
       onClick={onClick}
       href={href}
+      // A bare <button> defaults to type="submit" and would submit any form it lands in.
+      {...(as === "button" ? { type: "button" as const } : {})}
       style={{ x: sx, y: sy }}
       className={className}
     >

@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation"
 import { useRef, useState, useEffect, useCallback } from "react"
 import { motion, useScroll, useTransform, useReducedMotion } from "framer-motion"
 import { ArrowUpRight, MapPin } from "lucide-react"
-import { popularCities, propertiesInCity, cityStartingPriceCr } from "@/lib/vxp-data"
+import { popularCities } from "@/lib/vxp-data"
+import { formatStartingPrice, useCityStats } from "@/components/property/use-city-stats"
 import { ROUTES } from "@/lib/routes"
 import { Reveal, StaggerGroup, staggerItem } from "@/components/motion/reveal"
 
@@ -131,10 +132,7 @@ export function PopularCities() {
           </Reveal>
 
           <StaggerGroup className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2" stagger={0.05}>
-            {popularCities.map((c) => {
-              const listingCount = propertiesInCity(c.name).length
-              const startingPriceCr = cityStartingPriceCr(c.name)
-              return (
+            {popularCities.map((c) => (
                 <motion.div key={c.name} variants={staggerItem}>
                   <Link
                     href={ROUTES.cityDetail(c.slug)}
@@ -152,12 +150,7 @@ export function PopularCities() {
                       <div className="flex items-end justify-between">
                         <div>
                           <h3 className="font-serif text-2xl font-bold text-white">{c.name}</h3>
-                          <div className="mt-1 text-xs text-white/70">
-                            {listingCount} listing{listingCount === 1 ? "" : "s"}
-                          </div>
-                          <div className="mt-0.5 text-sm font-semibold text-brand-primary">
-                            {startingPriceCr !== undefined ? `from ₹ ${startingPriceCr} Cr` : "Coming soon"}
-                          </div>
+                          <CityStatsLine city={c.name} countClass="mt-1 text-xs text-white/70" priceClass="mt-0.5 text-sm font-semibold text-brand-primary" />
                         </div>
                         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/15 text-white backdrop-blur-sm transition-all group-hover:bg-brand-primary group-hover:text-ink-black">
                           <ArrowUpRight className="h-4 w-4" />
@@ -166,8 +159,7 @@ export function PopularCities() {
                     </div>
                   </Link>
                 </motion.div>
-              )
-            })}
+            ))}
           </StaggerGroup>
         </div>
       </div>
@@ -184,15 +176,18 @@ function HorizontalCityCard({
 }) {
   const router = useRouter()
   const goToCity = () => router.push(ROUTES.cityDetail(city.slug))
-  const listingCount = propertiesInCity(city.name).length
-  const startingPriceCr = cityStartingPriceCr(city.name)
 
   return (
     <div
       onClick={goToCity}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => e.key === "Enter" && goToCity()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          goToCity()
+        }
+      }}
       aria-label={`Explore ${city.name}`}
       className="group relative h-[58vh] w-[42vw] shrink-0 cursor-pointer overflow-hidden ring-1 ring-white/10"
     >
@@ -224,16 +219,15 @@ function HorizontalCityCard({
         <p className="mt-2 max-w-md text-sm text-white/70">{city.blurb}</p>
         <div className="mt-4 flex items-center justify-between">
           <div>
-            <div className="text-xs text-white/60">
-              {listingCount} listing{listingCount === 1 ? "" : "s"}
-            </div>
-            <div className="font-serif text-lg font-bold text-brand-primary">
-              {startingPriceCr !== undefined ? `from ₹ ${startingPriceCr} Cr` : "Coming soon"}
-            </div>
+            <CityStatsLine city={city.name} countClass="text-xs text-white/60" priceClass="font-serif text-lg font-bold text-brand-primary" />
           </div>
-          <button className="inline-flex items-center gap-2 border border-white/25 bg-black/25 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white backdrop-blur-sm transition-colors duration-300 hover:border-brand-primary hover:bg-brand-primary hover:text-ink-black">
+          {/* Visual affordance only — the whole card is the button (no nested interactive element). */}
+          <span
+            aria-hidden
+            className="inline-flex items-center gap-2 border border-white/25 bg-black/25 px-5 py-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white backdrop-blur-sm transition-colors duration-300 group-hover:border-brand-primary group-hover:bg-brand-primary group-hover:text-ink-black"
+          >
             Explore <ArrowUpRight className="h-3.5 w-3.5" />
-          </button>
+          </span>
         </div>
       </div>
     </div>
@@ -241,6 +235,7 @@ function HorizontalCityCard({
 }
 
 function TailCard({ index }: { index: number }) {
+  const router = useRouter()
   return (
     <div className="flex h-[58vh] w-[42vw] shrink-0 flex-col justify-center border border-brand-primary/30 bg-gradient-to-br from-brand-primary/12 via-transparent to-transparent p-10">
       <span className="text-[11px] font-semibold uppercase tracking-[0.24em] text-brand-primary">
@@ -250,16 +245,35 @@ function TailCard({ index }: { index: number }) {
         Not sure where to start?
       </h3>
       <p className="mt-4 max-w-md text-white/70">
-        Tell us your budget, lifestyle and timeline — our concierge team will
-        shortlist five neighbourhoods that actually fit, with three verified
-        listings in each.
+        Search every live listing by city, budget and type — and save the ones
+        that fit to your shortlist.
       </p>
+      {/* There's no concierge service/API behind this yet, so it leads to the
+          real search instead of a button that did nothing. */}
       <button
         type="button"
+        onClick={() => router.push(ROUTES.properties)}
         className="mt-8 inline-flex w-fit items-center gap-2 bg-brand-primary px-7 py-3.5 text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-black transition-colors duration-300 hover:bg-brand-primary-light"
       >
-        Talk to a concierge <ArrowUpRight className="h-4 w-4" />
+        Browse all residences <ArrowUpRight className="h-4 w-4" />
       </button>
     </div>
+  )
+}
+
+/** Live count + starting price for a city card (GET /search). */
+function CityStatsLine({ city, countClass, priceClass }: { city: string; countClass: string; priceClass: string }) {
+  const { count, startingPriceCr, isLoading, isError } = useCityStats(city)
+  if (isLoading) return <div className={countClass}>Loading listings…</div>
+  if (isError) return <div className={priceClass}>Explore listings</div>
+  return (
+    <>
+      <div className={countClass}>
+        {count} listing{count === 1 ? "" : "s"}
+      </div>
+      <div className={priceClass}>
+        {count === 0 ? "Coming soon" : startingPriceCr !== undefined ? formatStartingPrice(startingPriceCr) : "Explore listings"}
+      </div>
+    </>
   )
 }

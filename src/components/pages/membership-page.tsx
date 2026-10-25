@@ -1,17 +1,27 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { motion } from "framer-motion"
 import {
   ArrowLeft, Check, Crown, Briefcase, Building2, Sparkles, ArrowUpRight, ShieldCheck, Gift, AlertCircle,
 } from "lucide-react"
-import { useRouter } from "next/navigation"
-import { membershipTiers, type MembershipTier } from "@/lib/vxp-data"
-import { useNav, TIER_RANK, mockUsers } from "@/lib/nav-store"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useNav, TIER_RANK, type Tier } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
 import { Reveal } from "@/components/motion/reveal"
-import { REFERRAL_REWARD_DAYS } from "@/lib/dashboard-data"
-import { getReferralCode } from "@/lib/referral"
+import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { useLiveTiers, type LiveTier } from "@/components/billing/live-tiers"
+import {
+  MembershipCheckoutDialog,
+  normalizeReferralCode,
+  type ValidatedReferral,
+} from "@/components/billing/membership-checkout-dialog"
+import { CheckoutStatus } from "@/components/billing/checkout-status"
+import { useCheckout, usePendingOrder, MEMBERSHIP_PENDING_KEY } from "@/hooks/use-checkout"
+import { BillingHistory } from "@/components/billing/billing-history"
+import { useGetMyMembershipQuery, type ApiTier } from "@/store/api/membershipsApi"
+import { useValidateReferralCodeMutation } from "@/store/api/referralsApi"
+import type { OrderPurpose } from "@/store/api/billingApi"
 
 const tierIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   M: Crown,
@@ -19,9 +29,49 @@ const tierIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   V: Building2,
 }
 
+const API_TIER_CODE: Record<ApiTier, Tier> = { mercury: "M", jupiter: "J", venus: "V" }
+
+/**
+ * Which order purpose a plan card maps to, from the real membership record:
+ * no membership (or a lapsed/superseded one) → membership_new; an active
+ * one → renewal for the same tier, upgrade for a higher one. Downgrades
+ * aren't supported (no proration, no endpoint) — `null`.
+ */
+function purposeFor(current: { tier: ApiTier | null; status?: string } | undefined, target: Tier): OrderPurpose | null {
+  if (!current?.tier || (current.status && current.status !== "active" && current.status !== "pending")) {
+    return "membership_new"
+  }
+  const currentCode = API_TIER_CODE[current.tier]
+  if (currentCode === target) return "membership_renewal"
+  return TIER_RANK[target] > TIER_RANK[currentCode] ? "membership_upgrade" : null
+}
+
 export function MembershipPage() {
-  const { user, setUserTier } = useNav()
+  const { user } = useNav()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isRealAccount = !!user?.id
+  const { tiers, isLoading: plansLoading, isError: plansError, refetch: refetchPlans } = useLiveTiers()
+  const {
+    data: membership,
+    isLoading: membershipLoading,
+    isError: membershipError,
+    refetch: refetchMembership,
+  } = useGetMyMembershipQuery(undefined, { skip: !isRealAccount })
+  const [checkoutTier, setCheckoutTier] = useState<LiveTier | null>(null)
+  // A shared link (?ref=CODE) pre-fills the referral field; the redeem box
+  // validates it once and hands the result to checkout, so it isn't re-asked.
+  const refParam = normalizeReferralCode(searchParams.get("ref") ?? "")
+  const [validatedReferral, setValidatedReferral] = useState<ValidatedReferral | null>(null)
+  const checkoutPurpose = checkoutTier ? purposeFor(membership, checkoutTier.code) : null
+  // The right purpose (new / renewal / upgrade) depends on the real membership
+  // record — never let a member buy before it has loaded, or a renewal could
+  // go through as a second "new" membership.
+  const membershipKnown = !isRealAccount || (!membershipLoading && !membershipError)
+  // Set while the backend is still activating a membership (a paid order's
+  // webhook hasn't landed) — buying again would double-charge.
+  const activationPending = membership?.status === "pending"
+  const pendingOrder = usePendingOrder(isRealAccount ? MEMBERSHIP_PENDING_KEY : undefined)
 
   return (
     <div className="min-h-screen bg-brand-surface">
@@ -53,9 +103,22 @@ export function MembershipPage() {
           </div>
         </Reveal>
 
-        <Reveal direction="up" delay={0.1}>
-          <ReferralRedeem />
-        </Reveal>
+        {isRealAccount && (pendingOrder || activationPending) && (
+          <PendingMembershipNotice orderId={pendingOrder?.orderId} />
+        )}
+        {membershipError && (
+          <p role="alert" className="mx-auto mt-8 max-w-lg text-center text-sm text-red-600">
+            Couldn&apos;t load your current membership, so plans can&apos;t be bought right now.{" "}
+            <button onClick={() => refetchMembership()} className="font-bold underline">Retry</button>
+          </p>
+        )}
+
+        {/* Referral codes only apply to a first membership purchase. */}
+        {membershipKnown && (!isRealAccount || purposeFor(membership, "M") === "membership_new") && (
+          <Reveal direction="up" delay={0.1}>
+            <ReferralRedeem code={refParam} onApplied={setValidatedReferral} />
+          </Reveal>
+        )}
 
         <motion.div
           initial="hidden"
@@ -64,26 +127,58 @@ export function MembershipPage() {
           variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.12 } } }}
           className="mt-14 grid grid-cols-1 gap-6 lg:grid-cols-3"
         >
-          {membershipTiers.map((tier) => (
-            <TierCard
-              key={tier.code}
-              tier={tier}
-              userTier={user?.tier}
-              // Downgrade is never supported per the docs — no proration, no downgrade endpoint.
-              downgrade={!!user && TIER_RANK[user.tier] > TIER_RANK[tier.code]}
-              onChoose={() => {
-                if (!user) {
-                  // No account yet — membership requires signing up first.
-                  router.push(ROUTES.signup)
-                  return
+          {tiers.map((tier) => {
+            const purpose = isRealAccount ? purposeFor(membership, tier.code) : "membership_new"
+            return (
+              <TierCard
+                key={tier.code}
+                tier={tier}
+                // Nothing buyable until both the live plan and (for members)
+                // the current membership are known, or while one is activating.
+                blocked={
+                  tier.unavailable
+                    ? plansLoading
+                      ? "Loading price…"
+                      : "Not available right now"
+                    : isRealAccount && !membershipKnown
+                      ? "Loading…"
+                      : isRealAccount && (activationPending || !!pendingOrder)
+                        ? "Payment confirming…"
+                        : null
                 }
-                // Real upgrade, in the correct place — full price, no proration.
-                setUserTier(tier.code)
-                router.push(ROUTES.dashboard)
-              }}
-            />
-          ))}
+                current={purpose === "membership_renewal"}
+                // Downgrade is never supported per the docs — no proration, no downgrade endpoint.
+                downgrade={purpose === null}
+                expiresAt={purpose === "membership_renewal" ? membership?.expiresAt : undefined}
+                onChoose={() => {
+                  if (!user) {
+                    // No account yet — membership requires signing up first.
+                    router.push(ROUTES.signupWithReturn(ROUTES.membership))
+                    return
+                  }
+                  if (!isRealAccount) return
+                  setCheckoutTier(tier)
+                }}
+              />
+            )
+          })}
         </motion.div>
+        {plansError && (
+          <p className="mt-6 text-center text-sm text-red-600">
+            Couldn&apos;t load current prices.{" "}
+            <button onClick={() => refetchPlans()} className="font-bold underline">Retry</button>
+          </p>
+        )}
+
+        {checkoutTier && checkoutPurpose && (
+          <MembershipCheckoutDialog
+            tier={checkoutTier}
+            purpose={checkoutPurpose}
+            initialReferral={validatedReferral}
+            initialReferralCode={refParam || undefined}
+            onClose={() => setCheckoutTier(null)}
+          />
+        )}
 
         {/* Comparison table */}
         <Reveal direction="up" delay={0.2}>
@@ -103,14 +198,14 @@ export function MembershipPage() {
                 </thead>
                 <tbody className="divide-y divide-brand-border-light">
                   {[
-                    ["Listings included", "2", "30", "100"],
-                    ["Verified Badge", "—", "Manual", "Manual + Priority"],
-                    ["CRM", "—", "Yes", "Yes + Inventory"],
-                    ["Lead Pipeline", "Basic", "Full", "Full + Campaigns"],
-                    ["Analytics", "—", "Views/Calls/Enquiries", "ROI + Campaigns"],
-                    ["Co-broking", "—", "Yes", "Yes"],
-                    ["Account Manager", "—", "—", "Dedicated"],
-                    ["Referral reward", "30 days/signup", "30 days/signup", "30 days/signup"],
+                    ["Listings included", ...tiers.map((t) => (t.unavailable ? "—" : String(t.listings)))],
+                    ["Price", ...tiers.map((t) => (t.unavailable ? "—" : `${t.price} / ${t.duration}`))],
+                    // Straight from each plan's real feature flags — not marketing copy.
+                    ["Verified badge (via KYC)", ...tiers.map((t) => flagCell(t, "badges"))],
+                    ["CRM pipeline", ...tiers.map((t) => (t.unavailable ? "—" : t.planFeatures?.crmBoard ? "Kanban board" : "Status list"))],
+                    ["Co-broking", ...tiers.map((t) => (t.planFeatures?.coBroker ? "Coming soon" : "—"))],
+                    ["Developer projects & inventory", "—", "—", "Yes"],
+                    ["Referral code to share", "Yes", "Yes", "Yes"],
                   ].map((row) => (
                     <tr key={row[0]} className="hover:bg-brand-surface/40">
                       <td className="px-6 py-3 font-medium text-brand-secondary">{row[0]}</td>
@@ -125,12 +220,20 @@ export function MembershipPage() {
           </div>
         </Reveal>
 
+        {isRealAccount && (
+          <Reveal direction="up">
+            <div className="mt-10">
+              <BillingHistory />
+            </div>
+          </Reveal>
+        )}
+
         {/* Out-of-scope */}
         <Reveal direction="up">
           <div className="mt-10 flex items-start gap-3 border border-brand-primary/20 bg-brand-primary/5 p-5 text-xs text-brand-secondary/70">
             <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-brand-primary-dark" />
             <div>
-              <span className="font-bold text-brand-primary-dark">Reminder:</span> VXP does not participate in commission collection, property sale settlement, brokerage accounting, escrow, post-sale payment tracking, KYC, RERA compliance automation, or ownership transfer. Membership fees are the only revenue.
+              <span className="font-bold text-brand-primary-dark">Reminder:</span> VXP does not participate in commission collection, property sale settlement, brokerage accounting, escrow, post-sale payment tracking, RERA compliance automation, or ownership transfer. Membership fees are the only revenue.
             </div>
           </div>
         </Reveal>
@@ -139,45 +242,96 @@ export function MembershipPage() {
   )
 }
 
-type RedeemResult =
-  | { type: "valid"; referrerName: string }
-  | { type: "self" }
-  | { type: "invalid" }
-  | { type: "used" }
+function flagCell(tier: LiveTier, flag: "badges" | "crmBoard" | "coBroker") {
+  if (tier.unavailable) return "—"
+  return tier.planFeatures?.[flag] ? "Yes" : "—"
+}
 
-function ReferralRedeem() {
+/**
+ * A membership payment from an earlier visit is still "processing" (the
+ * backend activates on the Razorpay webhook, or an admin activates it by
+ * hand). Lets the member re-check it instead of paying again.
+ */
+function PendingMembershipNotice({ orderId }: { orderId?: string }) {
+  const checkout = useCheckout({ pendingKey: MEMBERSHIP_PENDING_KEY })
+  const router = useRouter()
+
+  if (checkout.phase === "idle") {
+    return (
+      <div role="status" className="mx-auto mt-8 max-w-lg border border-brand-primary/30 bg-brand-primary/10 px-5 py-4 text-sm text-brand-secondary">
+        <div className="font-semibold">A membership payment is still being confirmed.</div>
+        <p className="mt-1 text-xs text-brand-secondary/70">
+          Please don&apos;t pay again — it activates as soon as the payment is confirmed.
+        </p>
+        {orderId && (
+          <button onClick={() => checkout.recheck(orderId)} className="mt-2 text-xs font-bold text-brand-primary-dark underline">
+            Check status
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mx-auto mt-8 max-w-lg space-y-2">
+      <CheckoutStatus
+        phase={checkout.phase}
+        error={checkout.error}
+        successText="Your membership is active."
+        onRecheck={() => orderId && checkout.recheck(orderId)}
+        onRetry={() => {
+          // The remembered order failed — clear it and let the member pick a plan again.
+          checkout.forgetPending()
+          checkout.reset()
+          router.refresh()
+        }}
+      />
+    </div>
+  )
+}
+
+/**
+ * Pre-checks a referral code via POST /referrals/validate, then hands it to
+ * the checkout dialog. The code is only actually redeemed at checkout, when
+ * the order is created with it. Validation needs a signed-in account.
+ */
+function ReferralRedeem({ code, onApplied }: { code: string; onApplied: (referral: ValidatedReferral | null) => void }) {
   const { user } = useNav()
-  const [input, setInput] = useState("")
-  const [result, setResult] = useState<RedeemResult | null>(null)
+  const router = useRouter()
+  const [input, setInput] = useState(code)
+  const [validate, { isLoading }] = useValidateReferralCodeMutation()
+  const [result, setResult] = useState<
+    { type: "valid"; referrerName?: string; rewardDays?: number } | { type: "invalid"; message: string } | null
+  >(null)
 
-  // Mock referrer directory — every paid mock account has a code, keyed the
-  // same way F11's "your code" widget derives one (getReferralCode).
-  const referrerDirectory = useMemo(() => {
-    const paidAccounts = Object.values(mockUsers).filter((u) => u.tier !== "F")
-    return new Map(paidAccounts.map((u) => [getReferralCode(u), u.name]))
-  }, [])
-
-  const ownCode = user ? getReferralCode(user) : null
-
-  const apply = () => {
-    const code = input.trim().toUpperCase()
-    if (!code) return
-    // Once a code has been successfully applied this session, a user was
-    // already referred once — REFERRAL_INVALID (BR-34).
-    if (result?.type === "valid") {
-      setResult({ type: "used" })
+  const apply = async () => {
+    const normalized = normalizeReferralCode(input)
+    if (!normalized) return
+    setInput(normalized)
+    if (!user?.id) {
+      router.push(ROUTES.signupWithReturn(`${ROUTES.membership}?ref=${encodeURIComponent(normalized)}`))
       return
     }
-    if (ownCode && code === ownCode) {
-      setResult({ type: "self" })
-      return
+    setResult(null)
+    try {
+      const res = await validate(normalized).unwrap()
+      if (res.valid) {
+        setResult({ type: "valid", referrerName: res.referrerName, rewardDays: res.rewardDays })
+        onApplied({ code: normalized, referrerName: res.referrerName, rewardDays: res.rewardDays })
+      } else {
+        setResult({ type: "invalid", message: "This code isn't valid." })
+        onApplied(null)
+      }
+    } catch (error) {
+      onApplied(null)
+      setResult({
+        type: "invalid",
+        message:
+          getApiErrorCode(error) === "REFERRAL_INVALID"
+            ? "This code isn't valid — it may be inactive, your own, or you've already used a referral."
+            : getApiErrorMessage(error) ?? "Couldn't check this code. Please try again.",
+      })
     }
-    const referrerName = referrerDirectory.get(code)
-    if (!referrerName) {
-      setResult({ type: "invalid" })
-      return
-    }
-    setResult({ type: "valid", referrerName })
   }
 
   return (
@@ -187,44 +341,39 @@ function ReferralRedeem() {
         <span className="text-sm font-bold text-brand-secondary">Have a referral code?</span>
       </div>
       <p className="mt-1 text-xs text-brand-secondary/60">
-        Applied at checkout — the referrer gets {REFERRAL_REWARD_DAYS} extension days once your payment captures. Extension days only, no cashback.
+        Applied to your first membership at checkout — the referrer earns extension days once your payment captures. Extension days only, no cashback.
       </p>
       <div className="mt-3 flex gap-2">
         <input
           value={input}
           onChange={(e) => {
-            setInput(e.target.value)
+            setInput(e.target.value.slice(0, 32))
             setResult(null)
+            onApplied(null)
           }}
-          placeholder="e.g. AARAV-M2026"
+          onKeyDown={(e) => e.key === "Enter" && apply()}
+          aria-label="Referral code"
+          autoComplete="off"
+          placeholder="Enter code"
           className="flex-1 border border-brand-border-light bg-brand-surface px-3 py-2 text-sm uppercase outline-none focus:border-brand-primary"
         />
         <button
           onClick={apply}
-          disabled={!input.trim()}
+          disabled={!input.trim() || isLoading}
           className="bg-ink-black px-4 py-2 text-xs font-bold text-brand-primary disabled:cursor-not-allowed disabled:opacity-40"
         >
-          Apply
+          {isLoading ? "Checking…" : "Apply"}
         </button>
       </div>
       {result?.type === "valid" && (
         <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1.5 text-xs font-bold text-green-700">
-          <Check className="h-3.5 w-3.5" /> +{REFERRAL_REWARD_DAYS} days for {result.referrerName}
-        </div>
-      )}
-      {result?.type === "self" && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-red-600">
-          <AlertCircle className="h-3.5 w-3.5" /> You can&apos;t use your own code.
+          <Check className="h-3.5 w-3.5" /> Code applied
+          {result.referrerName ? ` — referred by ${result.referrerName}` : ""}. Now pick a plan.
         </div>
       )}
       {result?.type === "invalid" && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-red-600">
-          <AlertCircle className="h-3.5 w-3.5" /> This code isn&apos;t valid.
-        </div>
-      )}
-      {result?.type === "used" && (
-        <div className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-red-600">
-          <AlertCircle className="h-3.5 w-3.5" /> You&apos;ve already used a referral code.
+        <div role="alert" className="mt-3 flex items-start gap-1.5 text-xs font-semibold text-red-600">
+          <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" /> {result.message}
         </div>
       )}
     </div>
@@ -232,16 +381,18 @@ function ReferralRedeem() {
 }
 
 function TierCard({
-  tier, userTier, downgrade, onChoose,
+  tier, blocked, current, downgrade, expiresAt, onChoose,
 }: {
-  tier: MembershipTier
-  userTier?: MembershipTier["code"] | "F"
+  tier: LiveTier
+  /** Why the plan can't be bought right now (loading / unavailable / payment confirming), or null. */
+  blocked: string | null
+  current: boolean
   downgrade: boolean
+  expiresAt?: string
   onChoose: () => void
 }) {
   const Icon = tierIcons[tier.code] ?? Crown
   const popular = tier.popular
-  const current = userTier === tier.code
 
   return (
     <motion.div
@@ -277,7 +428,9 @@ function TierCard({
 
       <div className="mt-6 flex items-end gap-2">
         <span className={"font-serif text-5xl font-bold " + (popular ? "text-white" : "text-brand-secondary")}>{tier.price}</span>
-        <span className={"mb-1.5 text-sm " + (popular ? "text-white/60" : "text-brand-secondary/55")}>/ {tier.duration}</span>
+        {!tier.unavailable && (
+          <span className={"mb-1.5 text-sm " + (popular ? "text-white/60" : "text-brand-secondary/55")}>/ {tier.duration}</span>
+        )}
       </div>
 
       <div className={"mt-5 border px-4 py-3 text-xs " + (popular ? "border-white/15 bg-white/5 text-white/70" : "border-brand-border-light bg-brand-surface text-brand-secondary/70")}>
@@ -286,7 +439,9 @@ function TierCard({
       </div>
 
       <div className={"mt-5 flex items-baseline gap-2 border-y py-3 " + (popular ? "border-white/15" : "border-brand-border-light")}>
-        <span className={"font-serif text-3xl font-bold " + (popular ? "text-brand-primary" : "text-brand-primary-dark")}>{tier.listings}</span>
+        <span className={"font-serif text-3xl font-bold " + (popular ? "text-brand-primary" : "text-brand-primary-dark")}>
+          {tier.unavailable ? "—" : tier.listings}
+        </span>
         <span className={"text-sm " + (popular ? "text-white/70" : "text-brand-secondary/70")}>listings included</span>
       </div>
 
@@ -300,14 +455,14 @@ function TierCard({
       </ul>
 
       <motion.button
-        whileHover={current || downgrade ? undefined : { scale: 1.02 }}
-        whileTap={current || downgrade ? undefined : { scale: 0.98 }}
-        onClick={downgrade ? undefined : onChoose}
-        disabled={downgrade}
-        title={downgrade ? "Downgrade isn't available — memberships only move up in tier." : undefined}
+        whileHover={downgrade || blocked ? undefined : { scale: 1.02 }}
+        whileTap={downgrade || blocked ? undefined : { scale: 0.98 }}
+        onClick={downgrade || blocked ? undefined : onChoose}
+        disabled={downgrade || !!blocked}
+        title={downgrade ? "Downgrade isn't available — memberships only move up in tier." : blocked ?? undefined}
         className={
           "mt-8 inline-flex items-center justify-center gap-2 py-3.5 text-sm font-bold " +
-          (downgrade
+          (downgrade || blocked
             ? "cursor-not-allowed border border-brand-border-light bg-brand-surface text-brand-secondary/40"
             : current
             ? "border border-brand-primary/40 bg-brand-primary/10 text-brand-primary"
@@ -317,9 +472,14 @@ function TierCard({
         }
       >
         <span className="relative z-10 flex items-center gap-2">
-          {downgrade ? "Downgrade not available" : current ? "Current Plan" : <>Choose {tier.name} <ArrowUpRight className="h-4 w-4" /></>}
+          {blocked ?? (downgrade ? "Downgrade not available" : current ? "Current plan — Renew" : <>Choose {tier.name} <ArrowUpRight className="h-4 w-4" /></>)}
         </span>
       </motion.button>
+      {current && expiresAt && (
+        <p className={"mt-2 text-center text-[11px] " + (popular ? "text-white/60" : "text-brand-secondary/55")}>
+          Active until {new Date(expiresAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+        </p>
+      )}
     </motion.div>
   )
 }

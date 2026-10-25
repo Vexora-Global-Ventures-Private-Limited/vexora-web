@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useNav, type User } from "@/lib/nav-store"
 
@@ -33,4 +33,32 @@ export function useSessionGuard(predicate: (user: User | null) => boolean, redir
   }, [ready, user, predicate, redirectTo, router])
 
   return { ready, user }
+}
+
+/**
+ * Inverse of useSessionGuard — for guest-only pages (login/signup): bounces a
+ * visitor who's *already* signed in away to `redirectTo` instead of showing
+ * them the sign-in form again.
+ *
+ * Deliberately checks only ONCE, right when hydration finishes, instead of
+ * reacting to `user` on every change like useSessionGuard does: login-page
+ * and signup-page set `user` themselves the moment a fresh sign-in completes
+ * *on that same page*, to show their own "Signed in!" success screen for a
+ * beat before navigating away. A guard that kept watching `user` would fire
+ * on that exact change and yank the visitor off to `redirectTo` immediately,
+ * skipping the success screen entirely.
+ */
+export function useGuestGuard(redirectTo: string, { enabled = true }: { enabled?: boolean } = {}) {
+  const router = useRouter()
+  const hasHydrated = useNav((s) => s.hasHydrated)
+  const ready = useNav.persist ? hasHydrated : true
+  const checked = useRef(false)
+
+  useEffect(() => {
+    if (!enabled || !ready || checked.current) return
+    checked.current = true
+    if (useNav.getState().user) router.replace(redirectTo)
+  }, [enabled, ready, redirectTo, router])
+
+  return { ready }
 }

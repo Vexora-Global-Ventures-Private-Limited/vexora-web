@@ -1,5 +1,6 @@
-import { properties } from "@/lib/vxp-data"
 import { projectPriceRangeCr, type Project } from "@/lib/projects-data"
+import { HOMEPAGE_IMAGES } from "@/lib/homepage-images"
+import type { ShortlistSnapshot } from "@/lib/shortlist-store"
 import { ROUTES } from "@/lib/routes"
 
 export type ShortlistItem = {
@@ -10,27 +11,37 @@ export type ShortlistItem = {
   price: string
   image: string
   meta: string
-  href: string
+  /** null for a listing saved on another device — no slug is known to link to. */
+  href: string | null
 }
 
-/** Resolves shortlisted ids (properties + projects share one store, ids
- *  never collide — "p*" vs "prj*") into a single display-ready list, in the
- *  order they were added. Used by the dashboard Shortlist tab and both
- *  buyer-dashboard "Shortlisted" widgets so the mixed list only gets built once. */
-export function buildShortlistItems(shortlistedIds: string[], allProjects: Project[]): ShortlistItem[] {
+const isListingId = (id: string) => /^[a-f0-9]{24}$/i.test(id)
+
+/** Resolves shortlisted ids (real listings + local projects share one store)
+ *  into a single display-ready list, in the order they were added. Listings
+ *  render from the snapshot taken when they were hearted (the API has no
+ *  "listing by id" lookup); one without a snapshot — saved on another
+ *  device — gets a generic row instead of being silently dropped. Leftover
+ *  ids from the old mock catalog ("p1"…) are skipped. */
+export function buildShortlistItems(
+  shortlistedIds: string[],
+  snapshots: Record<string, ShortlistSnapshot>,
+  allProjects: Project[],
+): ShortlistItem[] {
   return shortlistedIds
     .map((id): ShortlistItem | null => {
-      const property = properties.find((p) => p.id === id)
-      if (property) {
+      if (isListingId(id)) {
+        const snap = snapshots[id]
+        if (snap) return { kind: "property", id, ...snap }
         return {
           kind: "property",
-          id: property.id,
-          title: property.title,
-          location: property.location,
-          price: property.price,
-          image: property.image,
-          meta: `${property.beds} Bed · ${property.baths} Bath`,
-          href: ROUTES.propertyDetail(property.id),
+          id,
+          title: "Saved listing",
+          location: "Saved on another device",
+          price: "—",
+          image: HOMEPAGE_IMAGES.apartmentInterior,
+          meta: "Open it again on the device you saved it from, or browse to find it",
+          href: null,
         }
       }
       const project = allProjects.find((p) => p.id === id)
