@@ -5,6 +5,8 @@ import { FeaturedProperties } from "@/components/sections/featured-properties"
 import { PropertyTypes } from "@/components/sections/property-types"
 import { PopularCities } from "@/components/sections/popular-cities"
 import { FeaturedDevelopers } from "@/components/sections/featured-developers"
+import { MembershipTiers } from "@/components/sections/membership-tiers"
+import { AdvertiserSection } from "@/components/sections/advertiser-section"
 import { Testimonials } from "@/components/sections/testimonials"
 import { CTASection } from "@/components/sections/cta-section"
 import { SiteFooter } from "@/components/sections/site-footer"
@@ -32,6 +34,8 @@ export default function Home() {
         <ProjectPromotionAdSlot />
         <PopularCities />
         <FeaturedDevelopers />
+        <MembershipTiers />
+        <AdvertiserSection />
         <Testimonials />
         <CTASection />
       </main>

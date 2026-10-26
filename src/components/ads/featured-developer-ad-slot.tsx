@@ -30,7 +30,7 @@ export function FeaturedDeveloperAdSlot({ dark = false }: { developerNames?: str
 
   return (
     <button
-      onClick={() => router.push(ROUTES.projects)}
+      onClick={() => router.push(builder.slug ? ROUTES.builderDetail(builder.slug) : ROUTES.projects)}
       className={
         "group flex w-full items-center justify-between gap-4 overflow-hidden border text-left " +
         (dark

@@ -9,6 +9,19 @@ export type MembershipPlan = {
   listingQuota: number
   features: { crmBoard?: boolean; badges?: boolean; coBroker?: boolean; [key: string]: boolean | undefined }
   isActive: boolean
+  version?: number
+  updatedAt?: string
+}
+
+/**
+ * The plan buyers should see for a tier: the newest active one. Normally
+ * there's exactly one, but plan edits can version and the admin can end up
+ * with two active plans for a tier — never charge the older price.
+ */
+export function activePlanForTier(plans: MembershipPlan[] | undefined, tier: MembershipPlan["tier"]): MembershipPlan | undefined {
+  return (plans ?? [])
+    .filter((p) => p.isActive && p.tier === tier)
+    .sort((a, b) => (b.version ?? 0) - (a.version ?? 0) || (Date.parse(b.updatedAt ?? "") || 0) - (Date.parse(a.updatedAt ?? "") || 0))[0]
 }
 
 export type OrderPurpose =

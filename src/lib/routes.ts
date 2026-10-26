@@ -19,6 +19,7 @@ export const ROUTES = {
   editListing: (id: string) => `/listings/${id}/edit`,
   projects: "/projects",
   projectDetail: (id: string) => `/projects/${id}`,
+  builderDetail: (slug: string) => `/builders/${encodeURIComponent(slug)}`,
   newProject: "/projects/new",
   editProject: (id: string) => `/projects/${id}/edit`,
   cities: "/cities",

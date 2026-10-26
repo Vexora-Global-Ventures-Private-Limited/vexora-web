@@ -92,17 +92,17 @@ Where the frontend could add a guard (validation, double-click locks, per-device
 | 49 | Login / signup say "you agree to Terms & Privacy Policy" but those pages don't exist |
 | 50 | Footer address and phone (`+91 22 5550 0199`) look like placeholders; About / Careers / Press / social links missing |
 | 51 | Concierge floating button has no advisor service behind it — remove, or connect to a real contact service |
-| 52 | "Membership tiers" and "Advertise with us" homepage sections are built (now with live prices) but not rendered — show or delete |
-| 53 | Public builder page (`/builders/:slug`) — product decision + route + page |
-| 54 | Brand-colour editor is open to every public visitor via the command palette — restrict to development or remove |
-| 55 | Film-grain / vignette overlay covers the whole site including dashboards and forms — keep, or limit to the homepage |
+| 52 | ~~"Membership tiers" and "Advertise with us" homepage sections are built (now with live prices) but not rendered — show or delete~~ — **solved 2026-10-26:** both sections are now on the homepage (after Featured Developers), with live prices and working links |
+| 53 | ~~Public builder page (`/builders/:slug`) — product decision + route + page~~ — **solved 2026-10-26:** `/builders/[slug]` built on the existing public `GET /builders/:slug` (teaser for visitors, projects when signed in); Featured Developers rows and the featured-developer ad link to it. Untested with real data — no builder profile exists on dev yet |
+| 54 | ~~Brand-colour editor is open to every public visitor via the command palette — restrict to development or remove~~ — **solved 2026-10-26:** the editor and its two command-palette entries are only available in development (`BRAND_EDITOR_ENABLED`); the live site no longer exposes it |
+| 55 | ~~Film-grain / vignette overlay covers the whole site including dashboards and forms — keep, or limit to the homepage~~ — **solved 2026-10-26:** **this item was wrong** — the film grain, vignette and concierge button are only rendered on the homepage (`src/app/page.tsx`), not site-wide. Nothing to change |
 
 ## F. Cleanup awaiting approval
 
 | # | Item |
 |---|---|
-| 56 | Delete 9 unused components: `motion/cursor-glow`, `motion/custom-cursor`, `motion/page-transition`, `motion/parallax`, `sections/dashboard-preview`, `sections/why-choose-us`, `sections/exclusivity-bar`, `sections/marquee-band`, `sections/section-divider` |
-| 57 | Remove Prisma — `src/lib/db.ts` is never imported, but `postinstall: prisma generate` runs on every install / Vercel build. Remove `prisma`, `@prisma/client`, `db.ts`, `prisma/`, the `postinstall` and `db:*` scripts |
-| 58 | Remove 14 unused packages: `next-auth`, `next-intl`, `z-ai-web-dev-sdk`, `gsap`, `@mdxeditor/editor`, `react-markdown`, `react-syntax-highlighter`, `@tanstack/react-table`, `@tanstack/react-query`, `@reactuses/core`, `uuid`, `vercel`, `@hookform/resolvers`, `zod` |
-| 59 | Delete the public placeholder route `src/app/api/route.ts` (`{"message":"Hello, world!"}`) and duplicate hook `src/lib/use-is-mobile.ts` |
-| 60 | Remove ~70 old screenshots (40 MB) from `scripts/`, plus template leftovers `examples/`, `mini-services/`, `Caddyfile`, `download/` |
+| 56 | ~~Delete 9 unused components: `motion/cursor-glow`, `motion/custom-cursor`, `motion/page-transition`, `motion/parallax`, `sections/dashboard-preview`, `sections/why-choose-us`, `sections/exclusivity-bar`, `sections/marquee-band`, `sections/section-divider`~~ — **solved 2026-10-26:** deleted (plus `motion/marquee.tsx`, which only the deleted `marquee-band` used) |
+| 57 | ~~Remove Prisma — `src/lib/db.ts` is never imported, but `postinstall: prisma generate` runs on every install / Vercel build. Remove `prisma`, `@prisma/client`, `db.ts`, `prisma/`, the `postinstall` and `db:*` scripts~~ — **solved 2026-10-26:** Prisma removed — `db.ts`, `prisma/`, `postinstall` and `db:*` scripts, both packages |
+| 58 | ~~Remove 14 unused packages: `next-auth`, `next-intl`, `z-ai-web-dev-sdk`, `gsap`, `@mdxeditor/editor`, `react-markdown`, `react-syntax-highlighter`, `@tanstack/react-table`, `@tanstack/react-query`, `@reactuses/core`, `uuid`, `vercel`, `@hookform/resolvers`, `zod`~~ — **solved 2026-10-26:** all 14 removed |
+| 59 | ~~Delete the public placeholder route `src/app/api/route.ts` (`{"message":"Hello, world!"}`) and duplicate hook `src/lib/use-is-mobile.ts`~~ — **solved 2026-10-26:** both deleted |
+| 60 | ~~Remove ~70 old screenshots (40 MB) from `scripts/`, plus template leftovers `examples/`, `mini-services/`, `Caddyfile`, `download/`~~ — **solved 2026-10-26:** screenshots and `examples/`, `mini-services/`, `Caddyfile`, `download/` removed; the `.ps1`/`.sh` scripts that `package.json` uses are kept |
