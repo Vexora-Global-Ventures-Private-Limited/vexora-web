@@ -3,7 +3,6 @@
 import { useEffect } from "react"
 import { useNav } from "@/lib/nav-store"
 import { useContactStore } from "@/lib/contact-store"
-import { useProjectsStore } from "@/lib/projects-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { useLoadSession } from "@/hooks/use-auth"
 import { getAccessToken } from "@/lib/auth-tokens"
@@ -22,7 +21,6 @@ export function SessionHydrator() {
   useEffect(() => {
     useNav.persist?.rehydrate()
     useContactStore.persist?.rehydrate()
-    useProjectsStore.persist?.rehydrate()
     useShortlistStore.persist?.rehydrate()
   }, [])
 

@@ -9,7 +9,6 @@ import { useNav } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
 import { useContactStore, leadsForAccount, FREE_CONTACT_LIMIT, CHANNEL_LABEL } from "@/lib/contact-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
-import { useProjectsStore } from "@/lib/projects-store"
 import { buildShortlistItems } from "@/lib/shortlist-items"
 import { useGetQuotaQuery } from "@/store/api/usersApi"
 import { useGetUnreadCountQuery } from "@/store/api/notificationsApi"
@@ -28,11 +27,10 @@ export function FreeDashboard() {
   const remaining = quota?.remaining ?? null
   const shortlistedIds = useShortlistStore((s) => s.shortlistedIds)
   const snapshots = useShortlistStore((s) => s.snapshots)
-  const allProjects = useProjectsStore((s) => s.projects)
   const { data: unreadCount = 0 } = useGetUnreadCountQuery(undefined, { skip: !user?.id })
 
   const myEnquiries = apiLeads.slice(0, 5)
-  const shortlisted = buildShortlistItems(shortlistedIds, snapshots, allProjects)
+  const shortlisted = buildShortlistItems(shortlistedIds, snapshots)
 
   return (
     <div className="space-y-6">
@@ -127,7 +125,7 @@ export function FreeDashboard() {
         {/* Shortlist */}
         <div className="bg-card p-6 ring-1 ring-brand-border">
           <h3 className="font-serif text-lg font-bold text-brand-secondary">Shortlisted</h3>
-          <p className="text-xs text-brand-secondary/55">Saved homes &amp; projects you&apos;re considering</p>
+          <p className="text-xs text-brand-secondary/55">Saved homes you&apos;re considering</p>
           <div className="mt-4 space-y-3">
             {shortlisted.length === 0 && (
               <p className="text-xs text-brand-secondary/50">Nothing shortlisted yet — tap the heart on any property or project to save it here.</p>

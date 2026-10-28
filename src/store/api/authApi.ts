@@ -40,16 +40,14 @@ export type VerifyOtpResponse = {
   }
 }
 
-export type GoogleMode = "login" | "signup"
-
+// One "Continue with Google" button serves both login and signup — the
+// backend finds or creates the account and says which via `isNewUser`. There
+// is no login/signup `mode` (PARTNER-AUTH-INTEGRATION.md §2).
 export type GoogleLoginBody = {
   code: string
+  // Popup sign-in issues codes bound to "postmessage"; the backend passes it
+  // straight through to Google's token endpoint (confirmed 2026-10-27).
   redirectUri: string
-  // NEW (PARTNER-AUTH-INTEGRATION.md §2) — Google has no OTP step, so this is
-  // the only signal that tells the backend which screen sent the request:
-  // "login" 404s as NOT_REGISTERED if the email isn't a known account yet;
-  // "signup" 409s as ALREADY_REGISTERED if it already is.
-  mode: GoogleMode
 }
 
 export type GoogleLoginResponse = {

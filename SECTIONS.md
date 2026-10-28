@@ -12,7 +12,7 @@ Every section below has been through the integration + bug review. Backend gaps 
 
 | # | Section | Route / location | Data | Notes |
 |---|---|---|---|---|
-| 1 | Log in — mobile / email OTP, Google | `/login` | API | Demo OTP is always `111111`; Google needs `NEXT_PUBLIC_GOOGLE_CLIENT_ID` (UI #41) |
+| 1 | Log in — mobile / email OTP, Google | `/login` | API | Demo OTP is always `111111`; Google: one find-or-create button (Client ID configured) |
 | 2 | Sign up — mobile / email OTP, Google | `/signup` | API | |
 | 3 | Complete your profile (compulsory) | `/signup?step=profile` | API | Name, intent, city, state, pincode + verified mobile & email. Portal pages send incomplete accounts back here |
 | 4 | Header user menu / sign out | Site header (all pages) | API | |
@@ -21,9 +21,9 @@ Every section below has been through the integration + bug review. Backend gaps 
 
 | # | Section | Data | Notes |
 |---|---|---|---|
-| 5 | Hero + search with typeahead | API | Suggestions from `/search/suggest`; hero stats are static claims (UI #46–47) |
+| 5 | Hero + search with typeahead | API + sample | Suggestions from `/search/suggest`; hero stats and photos are labelled **Sample** on screen (UI #46–47) |
 | 6 | Home banner ad slot | API | `/ad-serving/home-banner`; renders nothing when no campaign is active |
-| 7 | Trust strip | Static | |
+| 7 | Trust strip | Sample | Figures marked "(sample)" on screen (UI #46) |
 | 8 | Featured properties | API | Newest live listings; stock photos (UI #27) |
 | 9 | Ways of living (property types) | API | Live counts per type |
 | 10 | Project promotion ad slot | API | `/projects/promoted`; hidden when empty |
@@ -31,9 +31,9 @@ Every section below has been through the integration + bug review. Backend gaps 
 | 12 | Featured developers | API | `/builders/featured`; hidden while empty; rows link to the builder page |
 | 13 | Membership tiers | API | Live plan prices → `/membership` |
 | 14 | Advertise with us | Static | → `/promote` |
-| 15 | Testimonials | Static | Fabricated copy (UI #48) |
-| 16 | Call to action | Static | |
-| 17 | Footer | API + static | Live plan prices; placeholder address/phone (UI #50) |
+| 15 | Testimonials | Sample | Labelled "Sample testimonials" on screen (UI #48) |
+| 16 | Call to action | Static + sample | Buyer count marked "(sample figure)" |
+| 17 | Footer | API + sample | Live plan prices; address/phone labelled "Sample contact details" (UI #50) |
 | 18 | Welcome ad popup | API | Shows the served banner once per session, or nothing |
 | 19 | Concierge button, scroll progress, film grain | Static | Homepage only |
 
@@ -46,21 +46,21 @@ Every section below has been through the integration + bug review. Backend gaps 
 | 22 | Contact seller (WhatsApp, call, callback, site visit, enquiry) | `/properties/[slug]` | API | All 5 channels via `POST /leads`; profile, mobile, quota and expiry gates |
 | 23 | Shortlist heart + report listing | Cards, detail page | API + Local | Card copies kept per device (UI #28) |
 | 24 | Cities index | `/cities` | API + static | |
-| 25 | City detail | `/cities/[slug]` | API + static | |
+| 25 | City detail | API + static | Listings and developer projects are live (promoted projects in that city); the mock projects were removed |
 | 26 | Commercial | `/commercial` | API | Properties list pre-filtered to commercial types |
 | 27 | Land & Luxury Villas | `/land-luxury-villas` | API | Pre-filtered to plot / villa |
 | 28 | Global properties | `/global-properties` | Static | "Coming soon" |
 | 29 | Rent & Earn | `/rent-earn` | Static | "Coming soon" |
 | 30 | Smart Pool | `/smart-pool` | Static | "Coming soon" |
 | 31 | Projects list | `/projects` | API | `/projects/promoted` + featured builders (empty on dev) |
-| 32 | Project detail — towers & units | `/projects/[id]` | API | Real ids → live inventory; old mock ids → labelled "Sample project" |
+| 32 | Project detail — towers & units | `/projects/[id]` | API | Real ids → live inventory; any other id (incl. old sample `prj…` links) → "Project not found" |
 | 33 | Builder (developer) page | `/builders/[slug]` | API | Teaser for visitors, projects when signed in. Not yet seen with real data — no builder on dev |
 
 ## 4. Membership & billing
 
 | # | Section | Route | Data | Notes |
 |---|---|---|---|---|
-| 34 | Membership plans + checkout + referral code | `/membership` | API | Orders stay "processing" on dev — no activation route (admin UI #4) |
+| 34 | Membership plans + checkout (Razorpay window) + referral code | `/membership` | API | Orders stay "processing" on dev (no webhook in demo mode) until an admin activates them in Payment ops |
 | 35 | Billing history / receipts | `/membership`, `/reports`, Dashboard → Settings | API | Empty until a payment completes |
 
 ## 5. Dashboard (`/dashboard?tab=…`)
@@ -68,7 +68,7 @@ Every section below has been through the integration + bug review. Backend gaps 
 | # | Tab | Who sees it | Data | Notes |
 |---|---|---|---|---|
 | 36 | Overview (Free / Mercury / Jupiter / Venus variants) | Everyone | API | |
-| 37 | My Listings | Mercury, Jupiter | API | |
+| 37 | My Listings + buy extra listing slots | Mercury, Jupiter | API | Slot price comes from the created order (shown before paying) |
 | 38 | My Projects + builder profile | Venus | API | Untested live — no Venus account on dev (UI #43) |
 | 39 | Lead pipeline (status / kanban, detail, notes, masked call) | Sellers | API | |
 | 40 | Analytics | Sellers | API | Lead stats only (UI #35) |

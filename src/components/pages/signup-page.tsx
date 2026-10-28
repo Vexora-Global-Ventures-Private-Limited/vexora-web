@@ -8,10 +8,10 @@ import {
 } from "lucide-react"
 import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
-import { useGetProfileQuery } from "@/store/api/usersApi"
+import { useGetProfileQuery, useLazyGetProfileQuery, missingProfileFields } from "@/store/api/usersApi"
 import { useNav } from "@/lib/nav-store"
 import { ProfileDetailsForm } from "@/components/settings/profile-details-form"
-import { describeAuthError, getApiErrorCode, safeReturnTo } from "@/lib/api-error"
+import { describeAuthError, getApiErrorCode, getRetryAfterSeconds, safeReturnTo } from "@/lib/api-error"
 import { isValidEmail, isValidIndianMobile } from "@/lib/profile-options"
 import { OtpCodeInput, emptyOtp, formatCountdown } from "@/components/site/otp-code-input"
 import { GoogleIcon } from "@/components/icons/google-icon"
@@ -157,6 +157,9 @@ export function SignupPage() {
       startOtp(await signup(otpDestination, channel), channel)
     } catch (error) {
       setFormError(describeAuthError(error, "Couldn't resend the OTP. Please try again.").message)
+      // Keep Resend disabled for as long as the server will refuse it.
+      const wait = getRetryAfterSeconds(error)
+      if (wait) setResendCooldown(wait)
     }
   }
 
@@ -178,6 +181,20 @@ export function SignupPage() {
         </button>
       </div>
     )
+
+  // Google is find-or-create: a brand-new account always fills in its
+  // profile; an existing one only does if its profile is still incomplete —
+  // otherwise it's simply signed in.
+  const [fetchProfile] = useLazyGetProfileQuery()
+  const finishGoogle = async (isNewUser: boolean) => {
+    if (isNewUser) return setStep("profile")
+    const user = useNav.getState().user
+    const profile = await fetchProfile(undefined, false).unwrap().catch(() => null)
+    if (!profile || !user || missingProfileFields(profile, { phone: user.phone, email: user.email }).length > 0) {
+      return setStep("profile")
+    }
+    setSubmitted(true)
+  }
 
   // Auto-continue to the destination shortly after a successful signup --
   // back to whatever gated page sent the visitor here, or the dashboard by default.
@@ -312,22 +329,16 @@ export function SignupPage() {
                     <Mail className="h-3.5 w-3.5 text-brand-primary-dark" /> Email
                   </button>
                   <GoogleSignInButton
-                    mode="signup"
                     // Google verifies the email itself — no OTP step
-                    // (PARTNER-AUTH-INTEGRATION.md §2) — so a successful
-                    // signup goes straight to the profile step, same place
-                    // OTP verification lands.
-                    onSuccess={() => setStep("profile")}
+                    // (PARTNER-AUTH-INTEGRATION.md §2).
+                    onSuccess={(result) => {
+                      void finishGoogle(result.data.isNewUser)
+                    }}
                     onError={(error) => {
-                      // mode:"signup" 409s as ALREADY_REGISTERED when the
-                      // Google email is already a VXP account. The "Already
-                      // have an account? Sign in" link is right below.
                       const message =
-                        getApiErrorCode(error) === "ALREADY_REGISTERED"
-                          ? "That Google account already has a VXP account — please sign in below."
-                          : error instanceof Error && !getApiErrorCode(error)
-                            ? error.message
-                            : describeAuthError(error, "Google sign-up failed. Please try again.").message
+                        error instanceof Error && !getApiErrorCode(error)
+                          ? error.message
+                          : describeAuthError(error, "Google sign-up failed. Please try again.").message
                       setFormError(message)
                       setStepState("method")
                     }}

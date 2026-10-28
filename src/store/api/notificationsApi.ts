@@ -19,6 +19,37 @@ export type NotificationPreference = {
   channels: { email?: boolean; whatsapp?: boolean }
 }
 
+/**
+ * Every notification template on dev is still a seed placeholder (admin
+ * UNRESOLVED #50), so a brand-new user's first bell item read "Auth Welcome —
+ * Default template for auth.welcome on in_app". Until real copy is written
+ * in the admin Templates screen, placeholder text is swapped for readable
+ * copy here. Real (edited) templates pass through untouched.
+ */
+const FALLBACK_COPY: Record<string, { title: string; body: string }> = {
+  "auth.welcome": { title: "Welcome to VXP", body: "Your account is ready. Complete your profile to start contacting owners." },
+  "auth.login_new_device": { title: "New sign-in to your account", body: "Your account was just signed in to from a new device." },
+  "leads.new_received": { title: "New enquiry on your listing", body: "A buyer has contacted you about one of your listings." },
+  "listing.expiry_reminder": { title: "Your listing expires soon", body: "Renew it to keep it visible to buyers." },
+  "membership.expiry_reminder": { title: "Your membership expires soon", body: "Renew to keep your listings and leads active." },
+}
+
+const isPlaceholderBody = (body: string | null | undefined) => !body || /^default template for /i.test(body.trim())
+
+// "auth.welcome" → "Auth Welcome" — what the backend sends as a title when no real template exists.
+const autoTitle = (eventKey: string) =>
+  eventKey.split(/[._]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")
+
+function readableNotification(n: ApiNotification): ApiNotification {
+  const fallback = FALLBACK_COPY[n.eventKey]
+  const placeholderTitle = !n.title || n.title === autoTitle(n.eventKey)
+  return {
+    ...n,
+    title: placeholderTitle ? fallback?.title ?? autoTitle(n.eventKey) : n.title,
+    body: isPlaceholderBody(n.body) ? fallback?.body ?? "" : n.body,
+  }
+}
+
 export const notificationsApi = baseApi.injectEndpoints({
   endpoints: (builder) => ({
     // Flat `read` filter, real cursor pagination.
@@ -27,7 +58,10 @@ export const notificationsApi = baseApi.injectEndpoints({
         url: "/api/v1/notifications",
         params: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined)),
       }),
-      transformResponse: (res: { data: { notifications: ApiNotification[]; nextCursor: string | null } }) => res.data,
+      transformResponse: (res: { data: { notifications: ApiNotification[]; nextCursor: string | null } }) => ({
+        ...res.data,
+        notifications: res.data.notifications.map(readableNotification),
+      }),
       providesTags: ["Notifications"],
     }),
     getUnreadCount: builder.query<number, void>({

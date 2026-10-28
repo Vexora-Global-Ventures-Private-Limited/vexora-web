@@ -43,7 +43,8 @@ export function CTASection() {
 
         <Reveal direction="up" delay={0.25}>
           <p className="mx-auto mt-9 max-w-xl text-base leading-relaxed text-white/58 sm:text-lg">
-            1,84,000 buyers use VXP to discover, verify and close India&apos;s
+            {/* SAMPLE FIGURE — not live data (UNRESOLVED #46). */}
+            1,84,000 buyers <span className="text-white/35">(sample figure)</span> use VXP to discover, verify and close India&apos;s
             most premium real estate. We&apos;ll simply introduce you to it.
           </p>
         </Reveal>

@@ -117,6 +117,8 @@ function notificationHref(n: ApiNotification): string | null {
   if (domain === "listing") return ROUTES.dashboardTab("listings")
   if (domain === "membership" || domain === "billing") return ROUTES.membership
   if (domain === "ads") return ROUTES.advertiser
+  // Welcome ("complete your profile") and new-device sign-in both belong in Settings.
+  if (domain === "auth") return ROUTES.dashboardTab("settings")
   return null
 }
 

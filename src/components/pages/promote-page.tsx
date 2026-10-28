@@ -587,7 +587,7 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
                     <button onClick={() => setStep(4)} className="w-full text-center text-xs font-semibold text-brand-secondary/60 hover:text-brand-secondary">
                       ← Change package
                     </button>
-                    <p className="text-center text-[11px] text-brand-secondary/50">Test mode — no real money is charged.</p>
+                    <p className="text-center text-[11px] text-brand-secondary/50">Secure payment by Razorpay.</p>
                   </>
                 )}
                 {(checkout.phase === "paid" || checkout.phase === "timeout") && (

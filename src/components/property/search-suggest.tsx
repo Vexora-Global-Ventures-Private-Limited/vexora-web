@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState, type KeyboardEvent } from "react"
+import { popularCities } from "@/lib/vxp-data"
+import { useEffect, useState, type KeyboardEvent, useMemo } from "react"
 import { Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { cleanSuggestion } from "@/lib/api-mappers"
@@ -22,15 +23,24 @@ export function useSearchSuggestions(input: string) {
 }
 
 /**
- * City names from the Location Master (district + city levels — listings
- * store the district name, e.g. "Mumbai"). The search API matches `city`
- * exactly, so this is the list to resolve typed text against.
+ * City names to offer / resolve typed text against: the Location Master
+ * (district + city levels — listings store the district name, e.g. "Mumbai")
+ * plus the cities the site already promotes. The Location Master is still
+ * sparse on dev (Mumbai / Andheri only), and on its own it hid cities that do
+ * have live listings — typing "Pune" became a text search that found nothing.
+ * The search API matches `city` exactly, so names keep their canonical case.
  */
 export function useCityNames(): string[] {
   const { data } = useGetActiveLocationsQuery()
-  return Array.from(
-    new Set((data ?? []).filter((l) => l.type === "district" || l.type === "city").map((l) => l.name)),
-  ).sort()
+  return useMemo(() => {
+    const names = [
+      ...(data ?? []).filter((l) => l.type === "district" || l.type === "city").map((l) => l.name),
+      ...popularCities.map((c) => c.name),
+    ]
+    const byKey = new Map<string, string>()
+    for (const n of names) if (!byKey.has(n.toLowerCase())) byKey.set(n.toLowerCase(), n)
+    return Array.from(byKey.values()).sort()
+  }, [data])
 }
 
 /** Typed text → search params: an exact (case-insensitive) city match becomes `city`, anything else `q`. */
