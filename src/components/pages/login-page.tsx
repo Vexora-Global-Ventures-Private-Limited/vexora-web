@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import { ROUTES } from "@/lib/routes"
 import { useAuth, GoogleSignInButton } from "@/hooks/use-auth"
-import { describeAuthError, getApiErrorCode, safeReturnTo } from "@/lib/api-error"
+import { describeAuthError, getApiErrorCode, getRetryAfterSeconds, safeReturnTo } from "@/lib/api-error"
 import { isValidEmail, isValidIndianMobile } from "@/lib/profile-options"
 import { useNav } from "@/lib/nav-store"
 import { useLazyGetProfileQuery, missingProfileFields } from "@/store/api/usersApi"
@@ -133,6 +133,9 @@ export function LoginPage() {
       startOtp(await resendOtp(otpDestination, channel, "login"), channel)
     } catch (error) {
       setFormError(describeAuthError(error, "Couldn't resend the OTP. Please try again.").message)
+      // Keep Resend disabled for as long as the server will refuse it.
+      const wait = getRetryAfterSeconds(error)
+      if (wait) setResendCooldown(wait)
     }
   }
 
@@ -315,21 +318,17 @@ export function LoginPage() {
 
                   <div className="mt-8 space-y-3">
                     <GoogleSignInButton
-                      mode="login"
+                      // Find-or-create: an unknown Google account gets a new
+                      // VXP account here too, and finishSignIn sends it to
+                      // "Complete your profile".
                       onSuccess={() => {
                         void finishSignIn()
                       }}
                       onError={(error) => {
-                        // PARTNER-AUTH-INTEGRATION.md §2 — mode:"login" 404s as
-                        // NOT_REGISTERED when the Google email has no VXP
-                        // account yet. The "New to VXP? Create an account"
-                        // link is right below this button.
                         const message =
-                          getApiErrorCode(error) === "NOT_REGISTERED"
-                            ? "No account found for that Google account — please sign up below."
-                            : error instanceof Error && !getApiErrorCode(error)
-                              ? error.message
-                              : describeAuthError(error, "Google sign-in failed. Please try again.").message
+                          error instanceof Error && !getApiErrorCode(error)
+                            ? error.message
+                            : describeAuthError(error, "Google sign-in failed. Please try again.").message
                         setFormError(message)
                         setMethod("select")
                       }}

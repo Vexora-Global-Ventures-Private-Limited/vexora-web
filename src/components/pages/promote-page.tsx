@@ -20,6 +20,7 @@ import {
   useSetAdPackageMutation,
   usePayForAdMutation,
   useGetAdPackagesQuery,
+  latestActivePackages,
   useGetAdQuery,
   type Ad,
   type AdProduct,
@@ -149,12 +150,16 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
   const { data: liveListings } = useGetMyListingsQuery({ status: "live", limit: 50 }, { skip: product !== "sponsored" })
   const { data: builderProfile } = useGetMyBuilderProfileQuery(undefined, { skip: product !== "project_promotion" })
   const { data: locations } = useGetActiveLocationsQuery(undefined, { skip: product !== "banner" })
-  const { data: packages, isLoading: packagesLoading } = useGetAdPackagesQuery(product ?? "banner", { skip: !product || step < 4 })
+  const { data: rawPackages, isLoading: packagesLoading } = useGetAdPackagesQuery(product ?? "banner", { skip: !product || step < 4 })
+  // Newest active version of each package only — see latestActivePackages.
+  const packages = useMemo(() => latestActivePackages(rawPackages), [rawPackages])
   const cities = useMemo(
     () => Array.from(new Set((locations ?? []).filter((l) => l.type === "city" || l.type === "district").map((l) => l.name))).sort(),
     [locations],
   )
-  const selectedPackage = packages?.find((p) => p._id === packageId)
+  // Look up the selection in the raw list: a resumed draft may point at an
+  // older version that's no longer the one on offer.
+  const selectedPackage = rawPackages?.find((p) => p._id === packageId)
 
   const createDraft = async () => {
     if (!product) return
@@ -497,11 +502,11 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
               <p className="mt-2 text-sm text-brand-secondary/65">The price is locked in the moment you pick it.</p>
 
               {packagesLoading && <p className="mt-8 text-sm text-brand-secondary/55">Loading packages…</p>}
-              {packages && packages.filter((p) => p.isActive).length === 0 && (
+              {rawPackages && packages.length === 0 && (
                 <p className="mt-8 text-sm text-brand-secondary/55">No packages are available for this ad type right now.</p>
               )}
               <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
-                {packages?.filter((p) => p.isActive).map((pkg) => {
+                {packages.map((pkg) => {
                   const selected = packageId === pkg._id
                   return (
                     <motion.button
@@ -582,7 +587,7 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
                     <button onClick={() => setStep(4)} className="w-full text-center text-xs font-semibold text-brand-secondary/60 hover:text-brand-secondary">
                       ← Change package
                     </button>
-                    <p className="text-center text-[11px] text-brand-secondary/50">Test mode — no real money is charged.</p>
+                    <p className="text-center text-[11px] text-brand-secondary/50">Secure payment by Razorpay.</p>
                   </>
                 )}
                 {(checkout.phase === "paid" || checkout.phase === "timeout") && (

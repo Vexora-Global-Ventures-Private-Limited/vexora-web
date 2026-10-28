@@ -3,15 +3,15 @@
 import Image from "next/image"
 import { useRouter } from "next/navigation"
 import {
-  ArrowLeft, ArrowUpRight, ChevronRight, MapPin, Building2, Layers3,
-  Crown, Star, Sparkles, TrendingUp, Heart,
+  ArrowLeft, ArrowUpRight, ChevronRight, MapPin, Building2,
+  Crown, Star, TrendingUp, Heart,
 } from "lucide-react"
-import { popularCities, getCityBySlug, featuredDevelopers, type Property } from "@/lib/vxp-data"
-import { formatCr, searchDocToProperty, toShortlistSnapshot } from "@/lib/api-mappers"
+import { popularCities, getCityBySlug, type Property } from "@/lib/vxp-data"
+import { formatCr, placeholderImages, searchDocToProperty, toShortlistSnapshot } from "@/lib/api-mappers"
 import { useCityStats, formatStartingPrice } from "@/components/property/use-city-stats"
 import { useSearchQuery } from "@/store/api/searchApi"
 import { Skeleton } from "@/components/ui/skeleton"
-import { projectsInCity, type Project } from "@/lib/projects-data"
+import { useGetPromotedProjectsQuery, type Project } from "@/store/api/listingsApi"
 import { ROUTES } from "@/lib/routes"
 import { useNav, canSell } from "@/lib/nav-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
@@ -46,21 +46,15 @@ function PriorityBadge({ priority }: { priority: string }) {
   return null
 }
 
-// Monogram badge letter for a developer — uses the curated initials from the
-// homepage's developer index when available, otherwise derives one from the
-// name itself (first letter of each of the first two words). A stand-in
-// "logo" since no real developer trademarks are on file.
+// Monogram "logo" for a developer: first letter of each of the first two words.
 function developerInitials(name: string): string {
-  const known = featuredDevelopers.find((d) => d.name === name)
-  if (known) return known.initials
   return name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()
 }
 
-// Real developers active in a city, derived from actual listings/projects — not invented.
-function topDevelopersIn(listings: Property[], projects: Project[]) {
+// Developers active in a city, from live listings only (API projects carry no developer name).
+function topDevelopersIn(listings: Property[]) {
   const counts = new Map<string, number>()
   for (const l of listings) if (l.developer) counts.set(l.developer, (counts.get(l.developer) ?? 0) + 1)
-  for (const p of projects) counts.set(p.developer, (counts.get(p.developer) ?? 0) + 1)
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
 }
 
@@ -73,7 +67,7 @@ function popularAreasIn(listings: Property[], projects: Project[], cityName: str
     if (locality && locality !== cityName) counts.set(locality, (counts.get(locality) ?? 0) + 1)
   }
   listings.forEach((l) => addLocality(l.location))
-  projects.forEach((p) => addLocality(p.location))
+  projects.forEach((p) => p.locality && addLocality(p.locality))
   return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
 }
 
@@ -104,6 +98,8 @@ export function CityDetailPage({ slug }: { slug: string }) {
     { skip: !city },
   )
   const { count: listingCount, startingPriceCr } = useCityStats(city?.name ?? "")
+  // Real developer projects: the public promoted-projects list, narrowed to this city.
+  const { data: promoted } = useGetPromotedProjectsQuery()
 
   if (!city) {
     return (
@@ -123,10 +119,9 @@ export function CityDetailPage({ slug }: { slug: string }) {
   }
 
   const listings = (search?.hits ?? []).map(searchDocToProperty).sort(byPriority)
-  const projects = [...projectsInCity(city.name)].sort(byPriority)
+  const projects = (promoted ?? []).filter((p) => p.city?.trim().toLowerCase() === city.name.toLowerCase())
   const otherCities = popularCities.filter((c) => c.slug !== city.slug)
-  const newLaunches = projects.filter((p) => p.status === "New Launch")
-  const developers = topDevelopersIn(listings, projects)
+  const developers = topDevelopersIn(listings)
   const featuredDeveloperName = findFeaturedDeveloperName(developers.map(([name]) => name))
   const organicDevelopers = developers.filter(([name]) => name !== featuredDeveloperName)
   const areas = popularAreasIn(listings, projects, city.name)
@@ -218,33 +213,6 @@ export function CityDetailPage({ slug }: { slug: string }) {
         </div>
 
         {/* New launches — only when this city actually has one, never an empty highlight strip. */}
-        {newLaunches.length > 0 && (
-          <div className="mt-10 border border-brand-primary/30 bg-gradient-to-br from-brand-primary/10 via-transparent to-transparent p-6">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-brand-primary-dark" />
-              <h3 className="font-serif text-xl font-bold text-brand-secondary">New launches in {city.name}</h3>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {newLaunches.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => router.push(ROUTES.projectDetail(p.id))}
-                  className="group flex items-center gap-3 border border-brand-border-light bg-card p-3 text-left hover:border-brand-primary/40"
-                >
-                  <div className="relative h-14 w-14 shrink-0 overflow-hidden">
-                    <img src={p.coverImage} alt={p.name} className="h-full w-full object-cover" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-bold text-brand-secondary">{p.name}</div>
-                    <div className="truncate text-xs text-brand-secondary/55">{p.developer} · {p.location}</div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-brand-secondary/40" />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Featured properties */}
         <div className="mt-10">
           <div className="flex items-end justify-between">
@@ -365,49 +333,31 @@ export function CityDetailPage({ slug }: { slug: string }) {
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {projects.slice(0, 12).map((p) => (
-                <div
-                  key={p.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => router.push(ROUTES.projectDetail(p.id))}
-                  onKeyDown={(e) => e.key === "Enter" && router.push(ROUTES.projectDetail(p.id))}
-                  className="group cursor-pointer overflow-hidden bg-card text-left ring-1 ring-brand-border-light hover:ring-brand-primary/40"
+                <button
+                  key={p._id}
+                  type="button"
+                  onClick={() => router.push(ROUTES.projectDetail(p._id))}
+                  className="group overflow-hidden bg-card text-left ring-1 ring-brand-border-light hover:ring-brand-primary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary"
                 >
                   <div className="relative aspect-[4/3] overflow-hidden">
-                    <img src={p.coverImage} alt={p.name} className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
-                    {p.priority !== "Organic" && (
-                      <div className="absolute left-3 top-3">
-                        <PriorityBadge priority={p.priority} />
-                      </div>
-                    )}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); toggleShortlist(p.id) }}
-                      aria-pressed={shortlistedIds.includes(p.id)}
-                      aria-label={shortlistedIds.includes(p.id) ? "Remove from shortlist" : "Add to shortlist"}
-                      className={
-                        "absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full backdrop-blur-sm hover:bg-card " +
-                        (shortlistedIds.includes(p.id) ? "bg-card text-brand-primary-dark" : "bg-card/85 text-brand-secondary/70")
-                      }
-                    >
-                      <Heart className={"h-4 w-4" + (shortlistedIds.includes(p.id) ? " fill-brand-primary-dark" : "")} />
-                    </button>
+                    <img src={placeholderImages("apartment", p._id)[0]} alt="" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                    <span className="absolute right-2 top-2 bg-ink-black/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/85">
+                      Representative photo
+                    </span>
                   </div>
                   <div className="p-4">
-                    <span className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-brand-primary-dark">
-                      <Layers3 className="h-3 w-3" /> {p.developer}
-                    </span>
-                    <div className="mt-1 truncate font-serif text-base font-bold text-brand-secondary">{p.name}</div>
+                    <div className="truncate font-serif text-base font-bold text-brand-secondary">{p.name}</div>
                     <div className="mt-1 flex items-center gap-1 text-xs text-brand-secondary/55">
-                      <Building2 className="h-3 w-3 text-brand-primary-dark" /> {p.location}
+                      <Building2 className="h-3 w-3 text-brand-primary-dark" /> {[p.locality, p.city].filter(Boolean).join(", ")}
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Top developers — real names/counts derived from actual listings + projects here. */}
+        {/* Top developers — real names/counts derived from live listings here. */}
         {developers.length > 0 && (
           <div className="mt-10">
             <div className="flex items-center gap-2">

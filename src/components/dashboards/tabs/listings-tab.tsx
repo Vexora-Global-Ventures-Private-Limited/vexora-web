@@ -31,6 +31,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
+import { SlotCheckoutDialog, SLOTS_PENDING_KEY } from "@/components/billing/slot-checkout-dialog"
+import { usePendingOrder } from "@/hooks/use-checkout"
 
 const PAGE_SIZE = 12
 
@@ -54,6 +56,10 @@ export function ListingsTab(_props: { tier: Tier }) {
   const [query, setQuery] = useState("")
   const [deleting, setDeleting] = useState<Listing | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [buyingSlots, setBuyingSlots] = useState(false)
+  // Extra slots are members-only (POST /billing/slots → 402 for Free users).
+  const isMember = !!user && user.tier !== "F"
+  const pendingSlots = usePendingOrder(SLOTS_PENDING_KEY)
 
   const skip = !user?.id
   const { data, isLoading, isError, refetch } = useGetMyListingsQuery(
@@ -103,6 +109,14 @@ export function ListingsTab(_props: { tier: Tier }) {
           <h2 className="font-serif text-2xl font-bold text-brand-secondary">My Listings</h2>
           <p className="text-sm text-brand-muted-foreground">
             {quota ? `${quota.used} of ${quota.planQuota} listing slots used` : "Your drafts and published listings"}
+            {isMember && (
+              <>
+                {" · "}
+                <button onClick={() => setBuyingSlots(true)} className="font-bold text-brand-primary-dark hover:underline">
+                  {pendingSlots ? "Slot payment confirming…" : "Buy extra slots"}
+                </button>
+              </>
+            )}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -300,12 +314,23 @@ export function ListingsTab(_props: { tier: Tier }) {
 
       {quotaReached && (
         <div className="flex flex-wrap items-center gap-2 bg-brand-tertiary p-3 text-xs text-brand-secondary/70">
-          Listing limit reached — delete a listing you no longer need, or{" "}
+          Listing limit reached — delete a listing you no longer need,{" "}
+          {isMember && (
+            <>
+              <button onClick={() => setBuyingSlots(true)} className="font-bold text-brand-primary-dark hover:underline">
+                buy extra slots
+              </button>
+              ,{" "}
+            </>
+          )}
+          or{" "}
           <button onClick={() => router.push(ROUTES.membership)} className="font-bold text-brand-primary-dark hover:underline">
             upgrade for more listing slots →
           </button>
         </div>
       )}
+
+      {buyingSlots && <SlotCheckoutDialog onClose={() => setBuyingSlots(false)} />}
 
       <AlertDialog open={!!deleting} onOpenChange={(open) => !open && setDeleting(null)}>
         <AlertDialogContent>

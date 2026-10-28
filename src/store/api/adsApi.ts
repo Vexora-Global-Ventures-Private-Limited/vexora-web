@@ -30,6 +30,28 @@ export type AdPackage = {
   durationDays: number
   pricePaise: number
   isActive: boolean
+  version?: number
+  createdAt?: string
+}
+
+/**
+ * Editing a package in the admin creates a NEW version with a new _id but
+ * leaves the old one active (backend bug — vexora-admin UNRESOLVED #7), so
+ * the same package can appear twice with two prices. Show sellers only the
+ * newest active version of each package (same product + name).
+ */
+export function latestActivePackages(packages: AdPackage[] | undefined): AdPackage[] {
+  const newest = new Map<string, AdPackage>()
+  for (const pkg of packages ?? []) {
+    if (!pkg.isActive) continue
+    const key = `${pkg.product}:${pkg.name.trim().toLowerCase()}`
+    const current = newest.get(key)
+    const rank = (p: AdPackage) => [p.version ?? 0, Date.parse(p.createdAt ?? "") || 0] as const
+    if (!current || rank(pkg)[0] > rank(current)[0] || (rank(pkg)[0] === rank(current)[0] && rank(pkg)[1] > rank(current)[1])) {
+      newest.set(key, pkg)
+    }
+  }
+  return [...newest.values()].sort((a, b) => a.pricePaise - b.pricePaise)
 }
 
 export type AdMetrics = {

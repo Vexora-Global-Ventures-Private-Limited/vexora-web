@@ -127,7 +127,9 @@ export function SiteFooter() {
               for elite buyers, brokers, developers and investors. No
               commissions. No settlement.
             </p>
-            <address className="mt-8 space-y-2.5 text-sm not-italic text-white/55">
+            {/* SAMPLE CONTACT DETAILS — placeholders until the real office address and phone are supplied (UNRESOLVED #50). */}
+            <p className="mt-8 text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Sample contact details</p>
+            <address className="mt-2 space-y-2.5 text-sm not-italic text-white/55">
               <p className="flex items-start gap-3">
                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-primary" />
                 Pinnacle Corporate Park, BKC, Mumbai 400051

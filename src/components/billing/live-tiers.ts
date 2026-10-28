@@ -3,7 +3,7 @@
 import { useMemo } from "react"
 import { membershipTiers, type MembershipTier } from "@/lib/vxp-data"
 import { formatPaise } from "@/lib/api-mappers"
-import { useGetMembershipPlansQuery, type MembershipPlan } from "@/store/api/billingApi"
+import { activePlanForTier, useGetMembershipPlansQuery, type MembershipPlan } from "@/store/api/billingApi"
 
 const TIER_CODE: Record<MembershipPlan["tier"], MembershipTier["code"]> = { mercury: "M", jupiter: "J", venus: "V" }
 
@@ -38,7 +38,8 @@ export function useLiveTiers() {
 
   const tiers = useMemo<LiveTier[]>(() => {
     return membershipTiers.map((tier) => {
-      const plan = plans?.find((p) => p.isActive && TIER_CODE[p.tier] === tier.code)
+      const apiTier = (Object.keys(TIER_CODE) as MembershipPlan["tier"][]).find((t) => TIER_CODE[t] === tier.code)
+      const plan = apiTier ? activePlanForTier(plans, apiTier) : undefined
       if (!plan) {
         return {
           ...tier,

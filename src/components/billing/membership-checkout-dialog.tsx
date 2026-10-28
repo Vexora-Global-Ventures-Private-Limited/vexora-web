@@ -22,9 +22,9 @@ const PURPOSE_COPY: Partial<Record<OrderPurpose, string>> = {
 export const normalizeReferralCode = (raw: string) => raw.replace(/\s+/g, "").toUpperCase().slice(0, 32)
 
 /**
- * Checkout for one membership plan. Razorpay is in demo mode (no real
- * payment modal), so "Pay" goes straight through create → verify → poll in
- * useCheckout. The referral code is only offered on membership_new — the
+ * Checkout for one membership plan. "Pay" runs create → Razorpay window →
+ * verify → poll in useCheckout (the window is skipped on the demo-mode dev
+ * API). The referral code is only offered on membership_new — the
  * backend 409s it on any other purpose — and is validated before checkout.
  */
 export function MembershipCheckoutDialog({
@@ -180,7 +180,7 @@ export function MembershipCheckoutDialog({
               <p className="text-center text-[11px] text-brand-secondary/55">Apply the referral code (or clear it) to continue.</p>
             )}
             <p className="text-center text-[11px] text-brand-secondary/50">
-              Test mode — no real money is charged. Your membership activates once the payment is confirmed.
+              Secure payment by Razorpay. Your membership activates once the payment is confirmed.
             </p>
           </>
         )}

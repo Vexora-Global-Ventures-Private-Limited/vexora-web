@@ -1,10 +1,11 @@
 "use client"
 
+import { formatCountdown } from "@/components/site/otp-code-input"
 import { useEffect, useId, useState } from "react"
 import { CheckCircle2 } from "lucide-react"
 import { useRequestOtpMutation, useVerifyOtpMutation, type OtpChannel } from "@/store/api/authApi"
 import { useLoadSession } from "@/hooks/use-auth"
-import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
+import { getApiErrorCode, getApiErrorMessage, getRetryAfterSeconds, describeWait } from "@/lib/api-error"
 import { cn } from "@/lib/utils"
 import { isValidEmail, isValidIndianMobile } from "@/lib/profile-options"
 
@@ -92,9 +93,11 @@ export function VerifyContactField({
       setCode("")
       setCooldown(30)
     } catch (err) {
+      const wait = getRetryAfterSeconds(err)
+      if (getApiErrorCode(err) === "RATE_LIMITED" && wait) setCooldown(wait)
       setError(
         getApiErrorCode(err) === "RATE_LIMITED"
-          ? "Too many codes requested — please wait a few minutes and try again."
+          ? `Too many codes requested — try again in ${wait ? describeWait(wait) : "a few minutes"}.`
           : getApiErrorMessage(err) ?? "Couldn't send the code. Please try again.",
       )
     }
@@ -148,7 +151,7 @@ export function VerifyContactField({
             disabled={!draftValid || isRequesting || cooldown > 0}
             className="mt-1.5 shrink-0 border border-brand-primary px-3 text-xs font-bold text-brand-secondary hover:bg-brand-primary/10 disabled:opacity-50"
           >
-            {isRequesting ? "Sending…" : cooldown > 0 ? `Resend in ${cooldown}s` : "Verify"}
+            {isRequesting ? "Sending…" : cooldown > 0 ? `Resend in ${formatCountdown(cooldown)}` : "Verify"}
           </button>
         </div>
       ) : (
@@ -186,7 +189,7 @@ export function VerifyContactField({
             disabled={cooldown > 0 || isRequesting}
             className="mt-1 text-[11px] font-semibold text-brand-secondary/60 hover:text-brand-secondary disabled:opacity-50"
           >
-            {cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
+            {cooldown > 0 ? `Resend code in ${formatCountdown(cooldown)}` : "Resend code"}
           </button>
         </>
       )}

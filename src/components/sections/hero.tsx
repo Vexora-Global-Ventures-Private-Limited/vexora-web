@@ -26,6 +26,9 @@ import { cn } from "@/lib/utils"
 const ANY_TYPE = "Any residence"
 const budgets = ["Any budget", ...BUDGET_BUCKETS.map((b) => b.label)]
 
+// MOCK / SAMPLE DATA — illustrative figures, not live platform numbers.
+// Labelled "Sample figures" where they render (see below). Replace with real
+// numbers (or remove) before launch — vexora-web UNRESOLVED #46.
 const heroStats = [
   { to: 184000, suffix: "+", label: "Verified residences" },
   { to: 12400, suffix: "+", label: "RERA advisors" },
@@ -33,24 +36,27 @@ const heroStats = [
   { to: 92000, prefix: "₹ ", suffix: " Cr", label: "Volume closed" },
 ]
 
+// SAMPLE PHOTOS — stock imagery for the hero, not listings on VXP. They used
+// to carry real developer names and prices (Lodha / Runwal / Hiranandani) for
+// projects that aren't on the platform; now they're labelled as samples.
 const HERO_SLIDES = [
   {
     image: HOMEPAGE_IMAGES.heroModernEstate,
-    title: "Hiranandani Estate",
-    subtitle: "Thane West · From ₹ 6.8 Cr",
-    tag: "Signature villa",
+    title: "Sample photo — modern estate",
+    subtitle: "Illustrative image, not a listing on VXP",
+    tag: "Sample photo",
   },
   {
     image: HOMEPAGE_IMAGES.heroTwilightVilla,
-    title: "Runwal Sanctuary",
-    subtitle: "Goregaon, Mumbai · From ₹ 8.9 Cr",
-    tag: "Lake-facing villa",
+    title: "Sample photo — twilight villa",
+    subtitle: "Illustrative image, not a listing on VXP",
+    tag: "Sample photo",
   },
   {
     image: HOMEPAGE_IMAGES.heroPenthouse,
-    title: "Lodha Bellevue",
-    subtitle: "Worli, Mumbai · From ₹ 12.5 Cr",
-    tag: "Sky penthouse",
+    title: "Sample photo — penthouse",
+    subtitle: "Illustrative image, not a listing on VXP",
+    tag: "Sample photo",
   },
 ] as const
 
@@ -381,6 +387,9 @@ export function Hero() {
               </div>
             ))}
           </dl>
+          <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-white/40">
+            Sample figures · photos are illustrative
+          </p>
         </motion.div>
       </div>
 

@@ -51,6 +51,26 @@ export function isNetworkError(error: unknown): boolean {
  * 5th wrong code is still OTP_INVALID ("0 attempts remaining") — only the
  * 6th becomes OTP_MAX_ATTEMPTS — so "0 attempts" is treated as locked too.
  */
+/**
+ * Seconds until a 429 RATE_LIMITED clears. The backend puts it at the top
+ * level of the body, next to `error` (verified live: 3 codes per 10 minutes
+ * per number/email, counting sign-up, login and resend together).
+ */
+export function getRetryAfterSeconds(error: unknown): number | undefined {
+  if (!error || typeof error !== "object" || !("data" in error)) return undefined
+  const data = (error as { data?: unknown }).data
+  if (!data || typeof data !== "object") return undefined
+  const value = (data as { retryAfterSeconds?: unknown }).retryAfterSeconds
+  return typeof value === "number" && value > 0 ? Math.ceil(value) : undefined
+}
+
+/** "about 10 minutes" / "about a minute" / "a few seconds". */
+export function describeWait(seconds: number): string {
+  if (seconds < 45) return "a few seconds"
+  const minutes = Math.round(seconds / 60)
+  return minutes <= 1 ? "about a minute" : `about ${minutes} minutes`
+}
+
 export function describeAuthError(
   error: unknown,
   fallback: string,
@@ -74,8 +94,16 @@ export function describeAuthError(
     case "OTP_CONSUMED":
     case "OTP_NOT_FOUND":
       return { code, message: "This code can't be used any more — request a new one.", lockCode: true }
-    case "RATE_LIMITED":
-      return { code, message: "Too many codes requested. Please wait a few minutes and try again.", lockCode: false }
+    case "RATE_LIMITED": {
+      const wait = getRetryAfterSeconds(error)
+      return {
+        code,
+        message: wait
+          ? `Too many codes requested for this number or email. Try again in ${describeWait(wait)}.`
+          : "Too many codes requested. Please wait a few minutes and try again.",
+        lockCode: false,
+      }
+    }
     case "ACCOUNT_SUSPENDED":
       return {
         code,

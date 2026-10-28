@@ -4,12 +4,14 @@
  * Provenance band — a single kinetic hairline strip replacing the old
  * ExclusivityBar + TrustStrip stack. Slow gold ticker, editorial type.
  */
+// SAMPLE CLAIMS — the figures here aren't live platform data; they're marked
+// "(sample)" on screen until real numbers exist (vexora-web UNRESOLVED #46).
 const marks = [
-  "RERA-registered advisors",
-  "100% field-verified inventory",
+  "RERA-registered advisors (sample)",
+  "100% field-verified inventory (sample)",
   "Private by design",
-  "₹ 92,000 Cr+ closed volume",
-  "25 Indian cities",
+  "₹ 92,000 Cr+ closed volume (sample)",
+  "25 Indian cities (sample)",
   "Zero commission, zero spam",
 ]
 

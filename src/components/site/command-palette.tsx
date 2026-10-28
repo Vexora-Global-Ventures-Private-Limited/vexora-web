@@ -13,7 +13,7 @@ import {
 import { usePathname, useRouter } from "next/navigation"
 import { ROUTES } from "@/lib/routes"
 import { useNav } from "@/lib/nav-store"
-import { useThemeSettings } from "@/lib/theme-settings-store"
+import { BRAND_EDITOR_ENABLED, useThemeSettings } from "@/lib/theme-settings-store"
 import { loadCommandRecents, pushCommandRecent, type CommandRecent } from "@/lib/command-recents"
 import {
   Building2,
@@ -90,7 +90,7 @@ export function CommandPalette() {
         {recents.length > 0 && (
           <>
             <CommandGroup heading="Recent">
-              {recents.map((r) => (
+              {recents.filter((r) => BRAND_EDITOR_ENABLED || r.action !== "settings").map((r) => (
                 <CommandItem
                   key={r.id}
                   value={r.label}
@@ -149,10 +149,12 @@ export function CommandPalette() {
               </CommandItem>
             </>
           )}
-          <CommandItem value="settings theme colors" onSelect={() => run({ id: "settings", label: "Open settings", action: "settings" }, () => openSettings(true))}>
-            <Settings2 className="mr-2 h-4 w-4" />
-            Open settings
-          </CommandItem>
+          {BRAND_EDITOR_ENABLED && (
+            <CommandItem value="settings theme colors" onSelect={() => run({ id: "settings", label: "Open settings", action: "settings" }, () => openSettings(true))}>
+              <Settings2 className="mr-2 h-4 w-4" />
+              Open settings
+            </CommandItem>
+          )}
           <CommandItem value="scroll top reset" onSelect={() => run({ id: "scroll-top", label: "Scroll to top", action: "top" }, () => window.scrollTo({ top: 0, behavior: "smooth" }))}>
             <Sparkles className="mr-2 h-4 w-4" />
             Scroll to top
@@ -163,10 +165,12 @@ export function CommandPalette() {
             <Building2 className="mr-2 h-4 w-4" />
             Luxury listings
           </CommandItem>
-          <CommandItem value="brand colors palette" onSelect={() => run({ id: "palette", label: "Brand color picker", action: "settings" }, () => openSettings(true))}>
-            <Palette className="mr-2 h-4 w-4" />
-            Brand color picker
-          </CommandItem>
+          {BRAND_EDITOR_ENABLED && (
+            <CommandItem value="brand colors palette" onSelect={() => run({ id: "palette", label: "Brand color picker", action: "settings" }, () => openSettings(true))}>
+              <Palette className="mr-2 h-4 w-4" />
+              Brand color picker
+            </CommandItem>
+          )}
         </CommandGroup>
       </CommandList>
     </CommandDialog>

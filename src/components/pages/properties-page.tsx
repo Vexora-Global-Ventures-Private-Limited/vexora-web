@@ -1,5 +1,6 @@
 "use client"
 
+import { useCityNames } from "@/components/property/search-suggest"
 import { useEffect, useMemo, useState } from "react"
 import { motion } from "framer-motion"
 import Image from "next/image"
@@ -14,7 +15,6 @@ import { useNav } from "@/lib/nav-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { crToPaise, formatCr, propertyTypeLabel, searchDocToProperty, toShortlistSnapshot, type ApiProperty } from "@/lib/api-mappers"
 import {
-  useGetActiveLocationsQuery,
   useGetPublicConfigQuery,
   useSearchQuery,
   type SearchSort,
@@ -145,7 +145,6 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
 
   const { data: config } = useGetPublicConfigQuery()
-  const { data: locations } = useGetActiveLocationsQuery()
 
   const urlFilters = readFilters(searchParams, defaultType)
 
@@ -153,10 +152,8 @@ export function PropertiesPage({ segment = "Residence" }: PropertiesPageProps) {
   // validates `city`, and matches it case-sensitively — "mumbai" finds
   // nothing). Listings store the district-level name ("Mumbai"), so
   // district + city entries are both offered.
-  const cityOptions = useMemo(() => {
-    const names = (locations ?? []).filter((l) => l.type === "district" || l.type === "city").map((l) => l.name)
-    return Array.from(new Set(names)).sort()
-  }, [locations])
+  // Shared with the hero/header search so both offer the same cities.
+  const cityOptions = useCityNames()
   const typeOptions = meta.types ?? config?.allowedPropertyTypes ?? []
   const bhkOptions = config?.allowedBhkValues ?? []
 

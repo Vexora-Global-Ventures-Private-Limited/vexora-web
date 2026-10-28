@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion"
 import { Heart, MapPin, ArrowUpRight } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { ROUTES } from "@/lib/routes"
-import { useProjectsStore } from "@/lib/projects-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { buildShortlistItems } from "@/lib/shortlist-items"
 
@@ -15,14 +14,13 @@ export function ShortlistTab() {
   const snapshots = useShortlistStore((s) => s.snapshots)
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
   const pending = useShortlistStore((s) => s.pending)
-  const allProjects = useProjectsStore((s) => s.projects)
 
   // Pick up anything saved or removed on another device since sign-in.
   useEffect(() => {
     void useShortlistStore.getState().syncFromServer()
   }, [])
 
-  const items = buildShortlistItems(shortlistedIds, snapshots, allProjects)
+  const items = buildShortlistItems(shortlistedIds, snapshots)
 
   return (
     <div className="space-y-5">
@@ -64,11 +62,6 @@ export function ShortlistTab() {
                   <div className="relative aspect-[4/3] overflow-hidden">
                     <img src={item.image} alt="" loading="lazy" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
                     <div className="absolute inset-0 bg-gradient-to-t from-brand-secondary/50 to-transparent" />
-                    {item.kind === "project" && (
-                      <span className="absolute left-3 top-3 rounded-full bg-card/95 px-2.5 py-1 text-[10px] font-semibold uppercase text-brand-secondary">
-                        Project
-                      </span>
-                    )}
                     <div className="absolute bottom-3 left-3 font-serif text-lg font-bold text-white">{item.price}</div>
                   </div>
                   <div className="p-4">

@@ -41,7 +41,7 @@ export function Testimonials() {
         <MaskReveal>
           <p className="flex items-center justify-center gap-4 text-[11px] font-semibold uppercase tracking-[0.32em] text-brand-primary-dark">
             <span className="inline-block h-px w-12 bg-brand-primary/60" aria-hidden />
-            Words kept
+            Words kept · Sample testimonials
             <span className="inline-block h-px w-12 bg-brand-primary/60" aria-hidden />
           </p>
         </MaskReveal>

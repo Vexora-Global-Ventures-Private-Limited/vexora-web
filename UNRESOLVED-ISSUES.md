@@ -48,7 +48,7 @@ Where the frontend could add a guard (validation, double-click locks, per-device
 | 20 | A rejected listing can't be fixed or resubmitted (edits return 409, no resubmit endpoint) | Resubmit / re-open flow |
 | 21 | `POST /auth/logout` with an already-rotated or missing refresh token returns success but revokes nothing | Revoke the token family, or reject stale / missing tokens |
 | 22 | Access token keeps working up to 15 min after `DELETE /users/me` (`KNOWN-ISSUES.md` #35) | Server-side revocation on delete |
-| 23 | OTP rate limit (3 per 10 min) not enforced on dev; a superseded `otpId` returns `OTP_CONSUMED` (docs say `OTP_NOT_FOUND`); the 5th wrong code is still `OTP_INVALID` "0 attempts" instead of `OTP_MAX_ATTEMPTS` | Fix the limiter; align error codes with the docs |
+| 23 | ~~OTP rate limit (3 per 10 min) not enforced on dev~~ — **corrected 2026-10-27: it IS enforced now** — 3 codes per 10 minutes per number/email, counting sign-up, login and resend together, with `retryAfterSeconds` in the 429 body (the web now shows that wait and keeps Resend disabled for it). Still open: a superseded `otpId` returns `OTP_CONSUMED` (docs say `OTP_NOT_FOUND`); the 5th wrong code is still `OTP_INVALID` "0 attempts" instead of `OTP_MAX_ATTEMPTS` | Align the error codes with the docs |
 | 24 | Abuse reports: no de-duplication, accept non-existent listing ids, accept reasons over 40 chars | Validation + de-duplication |
 | 25 | Ads stay `draft` after payment until capture (no `pending_payment` state in practice); `GET /ads/:id` doesn't return creatives | Pending-payment status; include creatives in the ad payload |
 | 26 | Search: `sort` and `purpose` ignored by the MongoDB fallback; pages overlap (same listing on page 1 and 2); `city` must match exactly incl. case, no aliases (Bangalore / Bengaluru, Delhi / Delhi NCR); suggestions contain a literal `"undefined"` for listings without a locality | Fix search (or connect Meilisearch); stable sort with tie-breaker; case-insensitive city + aliases |
@@ -73,11 +73,11 @@ Where the frontend could add a guard (validation, double-click locks, per-device
 
 | # | Needed | Owner |
 |---|---|---|
-| 38 | Razorpay webhook secret / test webhook (or admin manual activation) — on dev every order stays `processing`, so no purchase ever completes | Backend config / Admin |
+| 38 | ~~Razorpay webhook secret / test webhook (or admin manual activation) — on dev every order stays `processing`, so no purchase ever completes~~ — **solved 2026-10-27:** backend built G3 — admin Payment ops lists stuck orders and activates them (same service as the webhook). Webhook itself still never fires in demo mode | Backend config / Admin |
 | 39 | MSG91 (SMS) and Resend (email) credentials — OTP is always `111111`, nothing is genuinely verified | Backend config |
 | 40 | Cloudinary credentials — no real photo / avatar / ad-creative uploads (users paste https URLs) | Backend config |
-| 41 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` — Google sign-in disabled locally | Config |
-| 42 | Populate the Location Master — only 6 entries (Mumbai / Andheri), so city pickers are free text with suggestions | Admin data |
+| 41 | ~~`NEXT_PUBLIC_GOOGLE_CLIENT_ID` — Google sign-in disabled locally~~ — **solved 2026-10-27:** backend shared the Client ID; set in `.env.local`/`.env.example`. `mode` field dropped (backend is find-or-create); signup routes existing users by profile completeness | Config |
+| 42 | Populate the Location Master — only 6 entries (Mumbai / Andheri), so city pickers are free text with suggestions | Admin data (the web's city pickers now also offer the promoted cities, so cities with listings — e.g. Pune — are reachable meanwhile) |
 | 43 | Paid test accounts (Mercury / Jupiter / Venus) and a seed seller with an active membership — CRM board, masked call, Venus projects, referrals and receipts have never run end to end on dev (every seed seller is lapsed, so every lead is undelivered) | Admin / test data |
 | 44 | Document response shapes: `/crm/leads` rows (buyer name / phone, listing title / city), `/crm/summary` (unstaged leads), notification `payload` per `eventKey`, receipt fields (`amountPaise`, `receiptNumber`, `pdfUrl`), ad CTR unit (fraction vs %), whether receipt PDFs are public | Backend docs |
 | 45 | ~~Admin cleanup: junk abuse reports filed during testing~~ — **done 2026-10-25**: all 3 resolved with action `none` from the admin API | — |
@@ -86,23 +86,23 @@ Where the frontend could add a guard (validation, double-click locks, per-device
 
 | # | Decision needed |
 |---|---|
-| 46 | Hero stats ("1,84,000 residences", "12,400 RERA advisors", "₹92,000 Cr closed"), CTA "1,84,000 buyers" and trust-strip claims — supply real figures or remove |
-| 47 | Hero slides present Lodha / Runwal / Hiranandani listings and prices that aren't on the platform — brand / legal risk |
-| 48 | Testimonials are fabricated — replace with real ones or remove |
+| 46 | Hero stats ("1,84,000 residences", "12,400 RERA advisors", "₹92,000 Cr closed"), CTA "1,84,000 buyers" and trust-strip claims — supply real figures or remove — **labelled on screen as "Sample figures" / "(sample)" since 2026-10-27 — still needs real figures or removal** |
+| 47 | Hero slides present Lodha / Runwal / Hiranandani listings and prices that aren't on the platform — brand / legal risk — **slides no longer carry developer names or prices — now neutral "Sample photo" captions, labelled on screen (2026-10-27)** |
+| 48 | Testimonials are fabricated — replace with real ones or remove — **labelled "Sample testimonials" on screen since 2026-10-27 — still needs real quotes or removal** |
 | 49 | Login / signup say "you agree to Terms & Privacy Policy" but those pages don't exist |
-| 50 | Footer address and phone (`+91 22 5550 0199`) look like placeholders; About / Careers / Press / social links missing |
+| 50 | Footer address and phone (`+91 22 5550 0199`) look like placeholders; About / Careers / Press / social links missing — **address/phone labelled "Sample contact details" on screen since 2026-10-27 — still needs real details** |
 | 51 | Concierge floating button has no advisor service behind it — remove, or connect to a real contact service |
-| 52 | "Membership tiers" and "Advertise with us" homepage sections are built (now with live prices) but not rendered — show or delete |
-| 53 | Public builder page (`/builders/:slug`) — product decision + route + page |
-| 54 | Brand-colour editor is open to every public visitor via the command palette — restrict to development or remove |
-| 55 | Film-grain / vignette overlay covers the whole site including dashboards and forms — keep, or limit to the homepage |
+| 52 | ~~"Membership tiers" and "Advertise with us" homepage sections are built (now with live prices) but not rendered — show or delete~~ — **solved 2026-10-26:** both sections are now on the homepage (after Featured Developers), with live prices and working links |
+| 53 | ~~Public builder page (`/builders/:slug`) — product decision + route + page~~ — **solved 2026-10-26:** `/builders/[slug]` built on the existing public `GET /builders/:slug` (teaser for visitors, projects when signed in); Featured Developers rows and the featured-developer ad link to it. Untested with real data — no builder profile exists on dev yet |
+| 54 | ~~Brand-colour editor is open to every public visitor via the command palette — restrict to development or remove~~ — **solved 2026-10-26:** the editor and its two command-palette entries are only available in development (`BRAND_EDITOR_ENABLED`); the live site no longer exposes it |
+| 55 | ~~Film-grain / vignette overlay covers the whole site including dashboards and forms — keep, or limit to the homepage~~ — **solved 2026-10-26:** **this item was wrong** — the film grain, vignette and concierge button are only rendered on the homepage (`src/app/page.tsx`), not site-wide. Nothing to change |
 
 ## F. Cleanup awaiting approval
 
 | # | Item |
 |---|---|
-| 56 | Delete 9 unused components: `motion/cursor-glow`, `motion/custom-cursor`, `motion/page-transition`, `motion/parallax`, `sections/dashboard-preview`, `sections/why-choose-us`, `sections/exclusivity-bar`, `sections/marquee-band`, `sections/section-divider` |
-| 57 | Remove Prisma — `src/lib/db.ts` is never imported, but `postinstall: prisma generate` runs on every install / Vercel build. Remove `prisma`, `@prisma/client`, `db.ts`, `prisma/`, the `postinstall` and `db:*` scripts |
-| 58 | Remove 14 unused packages: `next-auth`, `next-intl`, `z-ai-web-dev-sdk`, `gsap`, `@mdxeditor/editor`, `react-markdown`, `react-syntax-highlighter`, `@tanstack/react-table`, `@tanstack/react-query`, `@reactuses/core`, `uuid`, `vercel`, `@hookform/resolvers`, `zod` |
-| 59 | Delete the public placeholder route `src/app/api/route.ts` (`{"message":"Hello, world!"}`) and duplicate hook `src/lib/use-is-mobile.ts` |
-| 60 | Remove ~70 old screenshots (40 MB) from `scripts/`, plus template leftovers `examples/`, `mini-services/`, `Caddyfile`, `download/` |
+| 56 | ~~Delete 9 unused components: `motion/cursor-glow`, `motion/custom-cursor`, `motion/page-transition`, `motion/parallax`, `sections/dashboard-preview`, `sections/why-choose-us`, `sections/exclusivity-bar`, `sections/marquee-band`, `sections/section-divider`~~ — **solved 2026-10-26:** deleted (plus `motion/marquee.tsx`, which only the deleted `marquee-band` used) |
+| 57 | ~~Remove Prisma — `src/lib/db.ts` is never imported, but `postinstall: prisma generate` runs on every install / Vercel build. Remove `prisma`, `@prisma/client`, `db.ts`, `prisma/`, the `postinstall` and `db:*` scripts~~ — **solved 2026-10-26:** Prisma removed — `db.ts`, `prisma/`, `postinstall` and `db:*` scripts, both packages |
+| 58 | ~~Remove 14 unused packages: `next-auth`, `next-intl`, `z-ai-web-dev-sdk`, `gsap`, `@mdxeditor/editor`, `react-markdown`, `react-syntax-highlighter`, `@tanstack/react-table`, `@tanstack/react-query`, `@reactuses/core`, `uuid`, `vercel`, `@hookform/resolvers`, `zod`~~ — **solved 2026-10-26:** all 14 removed |
+| 59 | ~~Delete the public placeholder route `src/app/api/route.ts` (`{"message":"Hello, world!"}`) and duplicate hook `src/lib/use-is-mobile.ts`~~ — **solved 2026-10-26:** both deleted |
+| 60 | ~~Remove ~70 old screenshots (40 MB) from `scripts/`, plus template leftovers `examples/`, `mini-services/`, `Caddyfile`, `download/`~~ — **solved 2026-10-26:** screenshots and `examples/`, `mini-services/`, `Caddyfile`, `download/` removed; the `.ps1`/`.sh` scripts that `package.json` uses are kept |

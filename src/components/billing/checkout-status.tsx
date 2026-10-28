@@ -3,6 +3,7 @@
 import { Check, Loader2, AlertCircle, Clock } from "lucide-react"
 import type { CheckoutPhase } from "@/hooks/use-checkout"
 import { getApiErrorMessage } from "@/lib/api-error"
+import { PaymentDismissedError } from "@/lib/razorpay"
 
 /**
  * Renders the shared useCheckout() phases. "timeout" is not a failure —
@@ -27,13 +28,18 @@ export function CheckoutStatus({
   onRecheck: () => void
   onRetry: () => void
 }) {
-  if (phase === "idle") return null
+  // "review" is rendered by the caller (it owns the price + confirm button).
+  if (phase === "idle" || phase === "review") return null
 
-  if (phase === "creating" || phase === "confirming") {
+  if (phase === "creating" || phase === "paying" || phase === "confirming") {
     return (
       <div role="status" aria-live="polite" className="flex items-center gap-2 border border-brand-border-light bg-brand-surface px-4 py-3 text-sm text-brand-secondary">
         <Loader2 className="h-4 w-4 animate-spin text-brand-primary-dark" />
-        {phase === "creating" ? "Starting checkout…" : "Confirming your payment… please keep this page open."}
+        {phase === "creating"
+          ? "Starting checkout…"
+          : phase === "paying"
+            ? "Complete the payment in the Razorpay window…"
+            : "Confirming your payment… please keep this page open."}
       </div>
     )
   }
@@ -63,7 +69,20 @@ export function CheckoutStatus({
     )
   }
 
-  const apiMessage = getApiErrorMessage(error)
+  if (error instanceof PaymentDismissedError) {
+    return (
+      <div role="alert" className="border border-brand-border-light bg-brand-surface px-4 py-3 text-sm text-brand-secondary">
+        <div className="flex items-center gap-2 font-semibold">
+          <AlertCircle className="h-4 w-4 shrink-0 text-brand-primary-dark" /> Payment didn&apos;t complete — you have not been charged.
+        </div>
+        <button onClick={() => onRetry()} className="mt-2 text-xs font-bold underline">
+          Retry payment
+        </button>
+      </div>
+    )
+  }
+
+  const apiMessage = getApiErrorMessage(error) ?? (error instanceof Error ? error.message : null)
   return (
     <div role="alert" className="border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
       <div className="flex items-center gap-2 font-semibold">

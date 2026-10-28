@@ -61,7 +61,10 @@ export function FeaturedDevelopers() {
             <Reveal key={d._id} direction="up" index={i} staggerStep={0.06}>
               <button
                 type="button"
-                onClick={() => router.push(`${ROUTES.projects}?q=${encodeURIComponent(d.displayName)}`)}
+                // The builder's own page when it has a slug; otherwise a project search by name.
+                onClick={() =>
+                  router.push(d.slug ? ROUTES.builderDetail(d.slug) : `${ROUTES.projects}?q=${encodeURIComponent(d.displayName)}`)
+                }
                 className="group grid w-full grid-cols-[auto_1fr_auto] items-center gap-5 border-t border-white/12 py-7 text-left transition-all duration-500 hover:bg-white/[0.035] hover:pl-5 sm:grid-cols-[4.5rem_1.6fr_1fr_auto] sm:gap-8"
               >
                 <span className="folio-numeral folio-numeral-dark hidden !text-[2.5rem] sm:block" aria-hidden>
