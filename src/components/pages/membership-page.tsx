@@ -17,7 +17,8 @@ import {
   type ValidatedReferral,
 } from "@/components/billing/membership-checkout-dialog"
 import { CheckoutStatus } from "@/components/billing/checkout-status"
-import { useCheckout, usePendingOrder, MEMBERSHIP_PENDING_KEY } from "@/hooks/use-checkout"
+import { useCheckout, usePendingOrder, MEMBERSHIP_PENDING_KEY, type TrackedPendingOrder } from "@/hooks/use-checkout"
+import { formatPaise } from "@/lib/api-mappers"
 import { BillingHistory } from "@/components/billing/billing-history"
 import { useGetMyMembershipQuery, type ApiTier } from "@/store/api/membershipsApi"
 import { useValidateReferralCodeMutation } from "@/store/api/referralsApi"
@@ -104,7 +105,7 @@ export function MembershipPage() {
         </Reveal>
 
         {isRealAccount && (pendingOrder || activationPending) && (
-          <PendingMembershipNotice orderId={pendingOrder?.orderId} />
+          <PendingMembershipNotice pending={pendingOrder} />
         )}
         {membershipError && (
           <p role="alert" className="mx-auto mt-8 max-w-lg text-center text-sm text-red-600">
@@ -136,14 +137,23 @@ export function MembershipPage() {
                 // Nothing buyable until both the live plan and (for members)
                 // the current membership are known, or while one is activating.
                 blocked={
-                  tier.unavailable
+                  // A lower tier is never buyable — say why (downgrade), not "pending".
+                  purpose === null && !tier.unavailable
+                    ? null
+                    : tier.unavailable
                     ? plansLoading
                       ? "Loading price…"
                       : "Not available right now"
                     : isRealAccount && !membershipKnown
                       ? "Loading…"
-                      : isRealAccount && (activationPending || !!pendingOrder)
-                        ? "Payment confirming…"
+                      : purpose === "membership_renewal" && tier.pricePaise === 0
+                        ? "Free plan — no renewal needed"
+                      : isRealAccount && pendingOrder?.unpaid
+                        ? pendingOrder.order?.amountPaise === 0
+                          ? "Free plan awaiting activation"
+                          : "Unfinished payment — see above"
+                        : isRealAccount && (activationPending || !!pendingOrder)
+                          ? "Payment confirming…"
                         : null
                 }
                 current={purpose === "membership_renewal"}
@@ -252,17 +262,73 @@ function flagCell(tier: LiveTier, flag: "badges" | "crmBoard" | "coBroker") {
  * backend activates on the Razorpay webhook, or an admin activates it by
  * hand). Lets the member re-check it instead of paying again.
  */
-function PendingMembershipNotice({ orderId }: { orderId?: string }) {
+function PendingMembershipNotice({ pending }: { pending: TrackedPendingOrder | null }) {
   const checkout = useCheckout({ pendingKey: MEMBERSHIP_PENDING_KEY })
   const router = useRouter()
+  const orderId = pending?.orderId
+  const order = pending?.order
+  const startedAt = order?.createdAt
+    ? new Date(order.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })
+    : null
+
+  if (checkout.phase === "idle" && pending?.unpaid && order && order.amountPaise === 0) {
+    // A ₹0 order can't be paid (Razorpay rejects it) — only an admin can
+    // switch it on, so there's nothing for the member to do but wait.
+    return (
+      <div role="status" className="mx-auto mt-8 max-w-lg border border-brand-primary/30 bg-brand-primary/10 px-5 py-4 text-sm text-brand-secondary">
+        <div className="font-semibold">Your free membership request is waiting for activation.</div>
+        <p className="mt-1 text-xs text-brand-secondary/70">
+          Free plans are switched on by our team{startedAt ? ` (requested ${startedAt})` : ""}. Plan changes are locked until then.
+        </p>
+        <p className="mt-1 font-mono text-[11px] text-brand-secondary/55">Order {order._id}</p>
+        <button onClick={() => orderId && checkout.recheck(orderId)} className="mt-2 text-xs font-bold text-brand-primary-dark underline">
+          Check status
+        </button>
+      </div>
+    )
+  }
+
+  if (checkout.phase === "idle" && pending?.unpaid && order) {
+    // Checkout was started but never paid. The backend blocks every new
+    // membership order until this one is paid or cancelled.
+    return (
+      <div role="status" className="mx-auto mt-8 max-w-lg border border-brand-primary/30 bg-brand-primary/10 px-5 py-4 text-sm text-brand-secondary">
+        <div className="font-semibold">You have an unfinished membership payment.</div>
+        <p className="mt-1 text-xs text-brand-secondary/70">
+          A {order.purpose.replace("membership_", "")} payment of {formatPaise(order.amountPaise)}
+          {startedAt ? ` started on ${startedAt}` : ""} wasn&apos;t completed, so nothing was charged. Complete it to continue — new
+          plans and renewals stay locked until it&apos;s paid or cancelled by our support team.
+        </p>
+        <p className="mt-1 font-mono text-[11px] text-brand-secondary/55">Order {order._id}</p>
+        <div className="mt-3 flex flex-wrap items-center gap-4">
+          {order.idempotencyKey && (
+            <button
+              onClick={() => void checkout.resume(order, { description: "Membership" })}
+              className="btn-gold relative overflow-hidden px-4 py-2 text-xs font-bold"
+            >
+              <span className="relative z-10">Complete payment · {formatPaise(order.amountPaise)}</span>
+            </button>
+          )}
+          <button onClick={() => orderId && checkout.recheck(orderId)} className="text-xs font-bold text-brand-primary-dark underline">
+            Check status
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   if (checkout.phase === "idle") {
     return (
       <div role="status" className="mx-auto mt-8 max-w-lg border border-brand-primary/30 bg-brand-primary/10 px-5 py-4 text-sm text-brand-secondary">
-        <div className="font-semibold">A membership payment is still being confirmed.</div>
+        <div className="font-semibold">
+          {pending?.overdue ? "Your membership payment is taking longer than usual." : "A membership payment is still being confirmed."}
+        </div>
         <p className="mt-1 text-xs text-brand-secondary/70">
-          Please don&apos;t pay again — it activates as soon as the payment is confirmed.
+          {pending?.overdue
+            ? "If money left your account, it will activate automatically — contact support with the order ID below if it doesn't."
+            : "Please don't pay again — it activates as soon as the payment is confirmed."}
         </p>
+        {pending?.overdue && orderId && <p className="mt-1 font-mono text-[11px] text-brand-secondary/60">Order {orderId}</p>}
         {orderId && (
           <button onClick={() => checkout.recheck(orderId)} className="mt-2 text-xs font-bold text-brand-primary-dark underline">
             Check status
@@ -280,8 +346,9 @@ function PendingMembershipNotice({ orderId }: { orderId?: string }) {
         successText="Your membership is active."
         onRecheck={() => orderId && checkout.recheck(orderId)}
         onRetry={() => {
-          // The remembered order failed — clear it and let the member pick a plan again.
-          checkout.forgetPending()
+          // Closed Razorpay again → back to the unfinished-payment notice;
+          // a failed order → cleared so the member can pick a plan again.
+          if (checkout.phase === "failed" && !checkout.error) checkout.forgetPending()
           checkout.reset()
           router.refresh()
         }}
@@ -476,8 +543,14 @@ function TierCard({
         </span>
       </motion.button>
       {current && expiresAt && (
-        <p className={"mt-2 text-center text-[11px] " + (popular ? "text-white/60" : "text-brand-secondary/55")}>
-          Active until {new Date(expiresAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+        <p className={"mt-2 text-center text-[11px] leading-relaxed " + (popular ? "text-white/60" : "text-brand-secondary/55")}>
+          Active until {new Date(expiresAt).toLocaleString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}
+          <br />
+          {tier.pricePaise === 0
+            ? "Free plans can't be extended by renewing. Upgrade to a paid plan to keep membership benefits beyond this date."
+            : blocked
+              ? "You can renew once your pending payment is completed or confirmed."
+              : `Renewing adds ${tier.duration} on top of this date — you don't lose any remaining days.`}
         </p>
       )}
     </motion.div>

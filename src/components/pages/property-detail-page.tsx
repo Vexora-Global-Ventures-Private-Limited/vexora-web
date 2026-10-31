@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from "date-fns"
 import { useNav } from "@/lib/nav-store"
 import { ROUTES } from "@/lib/routes"
+import { useGetUserBadgesQuery } from "@/store/api/kycApi"
 import { useContactStore, leadsForAccount, LEAD_MESSAGE_MAX, CHANNEL_LABEL } from "@/lib/contact-store"
 import { useShortlistStore } from "@/lib/shortlist-store"
 import { searchDocToProperty, toShortlistSnapshot, type ApiProperty } from "@/lib/api-mappers"
@@ -85,6 +86,11 @@ function PropertyDetail({ property, description }: { property: ApiProperty; desc
   const isShortlisted = useShortlistStore((s) => s.isShortlisted(property.id))
   const toggleShortlist = useShortlistStore((s) => s.toggleShortlist)
   const isOwner = !!user?.id && user.id === property.sellerId
+  // The seller's current badge from the public badges API (authoritative,
+  // updates the moment KYC is approved or a badge revoked); the search
+  // index copy on the listing is the fallback while it loads.
+  const { data: sellerBadges } = useGetUserBadgesQuery(property.sellerId, { skip: !property.sellerId })
+  const badges = sellerBadges ? sellerBadges.map((b) => b.type) : property.badges
   const detailHref = ROUTES.propertyDetail(property.slug)
 
   // Free users only — members have unlimited contacts. Fetched fresh, never cached.
@@ -377,10 +383,10 @@ function PropertyDetail({ property, description }: { property: ApiProperty; desc
                     <Star className="mr-1 h-3 w-3 fill-brand-primary" /> Featured
                   </Badge>
                 )}
-                {property.badges.length > 0 && (
+                {badges.length > 0 && (
                   <Badge className="bg-brand-surface text-brand-primary-dark hover:bg-brand-surface">
                     <BadgeCheck className="mr-1 h-3 w-3" />
-                    {property.badges.includes("verified_developer") ? "Verified Developer" : "Verified Seller"}
+                    {badges.includes("verified_developer") ? "Verified Developer" : "Verified Seller"}
                   </Badge>
                 )}
                 <Badge variant="outline" className="border-brand-border-light text-brand-secondary/70">For {property.purpose}</Badge>
@@ -572,14 +578,14 @@ function PropertyDetail({ property, description }: { property: ApiProperty; desc
                       <div>
                         <div className="flex items-center gap-1.5">
                           <div className="font-serif text-base font-bold text-brand-secondary">VXP Listing Owner</div>
-                          {property.badges.length > 0 && (
+                          {badges.length > 0 && (
                             <BadgeCheck className="h-4 w-4 shrink-0 text-brand-primary-dark drop-shadow-[0_0_4px_var(--brand-primary)]" />
                           )}
                         </div>
                         <div className="text-xs text-brand-secondary/55">
-                          {property.badges.includes("verified_developer")
+                          {badges.includes("verified_developer")
                             ? "Verified developer"
-                            : property.badges.includes("verified")
+                            : badges.includes("verified")
                               ? "KYC verified"
                               : "Not yet verified"}
                         </div>

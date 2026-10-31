@@ -1,6 +1,8 @@
 "use client"
 
 import { useId, useState } from "react"
+import { isUnsignedUploadConfigured } from "@/lib/cloudinary"
+import { ImageUploadButton } from "@/components/site/image-upload-button"
 import { Building2 } from "lucide-react"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { cn } from "@/lib/utils"
@@ -137,7 +139,10 @@ export function BuilderProfileForm({ profile, onDone }: { profile: BuilderProfil
           {errorText("city")}
         </div>
         <div className="sm:col-span-2">
-          <label htmlFor={`${ids}-logoUrl`} className={labelClass}>Logo URL (optional)</label>
+          <label htmlFor={`${ids}-logoUrl`} className={labelClass}>Logo (optional) — upload or paste a link</label>
+          {isUnsignedUploadConfigured() && (
+            <ImageUploadButton folder="builders" label="Upload logo" onUploaded={([url]) => update("logoUrl", url)} className="mb-2 mt-1.5" />
+          )}
           <input {...field("logoUrl")} value={form.logoUrl} onChange={(e) => update("logoUrl", e.target.value)} inputMode="url" placeholder="https://…" className={inputClass} />
           {errorText("logoUrl")}
         </div>

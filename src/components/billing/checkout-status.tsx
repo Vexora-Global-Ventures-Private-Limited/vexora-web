@@ -2,7 +2,7 @@
 
 import { Check, Loader2, AlertCircle, Clock } from "lucide-react"
 import type { CheckoutPhase } from "@/hooks/use-checkout"
-import { getApiErrorMessage } from "@/lib/api-error"
+import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { PaymentDismissedError } from "@/lib/razorpay"
 
 /**
@@ -52,6 +52,20 @@ export function CheckoutStatus({
     )
   }
 
+  if (phase === "free_pending") {
+    return (
+      <div role="status" aria-live="polite" className="border border-brand-primary/30 bg-brand-primary/10 px-4 py-3 text-sm text-brand-secondary">
+        <div className="flex items-center gap-2 font-semibold">
+          <Clock className="h-4 w-4 text-brand-primary-dark" /> Free plan requested
+        </div>
+        <p className="mt-1 text-xs text-brand-secondary/70">
+          There&apos;s nothing to pay. Free memberships are switched on by our team — you&apos;ll get a notification as soon as
+          it&apos;s active.
+        </p>
+      </div>
+    )
+  }
+
   if (phase === "timeout") {
     return (
       <div role="status" aria-live="polite" className="border border-brand-primary/30 bg-brand-primary/10 px-4 py-3 text-sm text-brand-secondary">
@@ -78,6 +92,19 @@ export function CheckoutStatus({
         <button onClick={() => onRetry()} className="mt-2 text-xs font-bold underline">
           Retry payment
         </button>
+      </div>
+    )
+  }
+
+  if (getApiErrorCode(error) === "ORDER_ALREADY_IN_PROGRESS") {
+    // Not a failure — an earlier membership payment is still being confirmed.
+    return (
+      <div role="status" className="border border-brand-primary/30 bg-brand-primary/10 px-4 py-3 text-sm text-brand-secondary">
+        <div className="font-semibold">You already have an open membership payment.</div>
+        <p className="mt-1 text-xs text-brand-secondary/70">
+          Only one can be open at a time. Close this — the plans page shows it: complete it if it was never paid, or wait for it to
+          be confirmed. You can renew or change plans after that.
+        </p>
       </div>
     )
   }

@@ -9,6 +9,7 @@ import { formatPaise, propertyTypeLabel } from "@/lib/api-mappers"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { useDeleteListingMutation, useGetListingQuery } from "@/store/api/listingsApi"
 import { ListingWizard } from "@/components/listings/listing-wizard"
+import { ListingPhotos } from "@/components/listings/listing-photos"
 import { ListingStatusPill, LISTING_STATUS_HINT } from "@/components/listings/listing-status"
 import { DemoAccountNotice } from "@/components/pages/add-listing-page"
 import {
@@ -166,6 +167,8 @@ export function EditListingPage({ listingId }: { listingId: string }) {
                 <Item label="Location" value={[listing.subLocality, listing.locality, listing.city, listing.state].filter(Boolean).join(", ") || "—"} />
                 {listing.expiresAt && <Item label="Expires" value={new Date(listing.expiresAt).toLocaleDateString("en-IN")} />}
               </dl>
+              <h2 className="mt-6 text-[11px] font-semibold uppercase tracking-wide text-brand-muted-foreground">Photos</h2>
+              <ListingPhotos listingId={listing._id} title={listing.title} className="mt-2" />
               {listing.status === "rejected" && (
                 <p className="mt-4 border border-red-200 bg-red-50 p-3 text-xs text-red-700">
                   {listing.rejectionReason ? `Rejection reason: ${listing.rejectionReason}` : "Our team didn't approve this listing."}{" "}

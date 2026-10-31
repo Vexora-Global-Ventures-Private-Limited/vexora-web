@@ -52,6 +52,17 @@ export function isDemoOrder(order: CreatedOrder): boolean {
   return order.razorpayKeyId === "rzp_test_demo" || order.razorpayOrderId.startsWith("order_mock_")
 }
 
+/**
+ * A ₹0 order (Mercury). Razorpay can't take a ₹0 payment: the backend issues
+ * a placeholder `order_free_…` id that Razorpay rejects ("Payment Failed")
+ * and verify refuses too (PAYMENT_SIGNATURE_INVALID, checked 2026-10-31).
+ * There's no self-serve path — an admin activates it — so the checkout
+ * never opens Razorpay for one.
+ */
+export function isFreeOrder(order: CreatedOrder): boolean {
+  return order.amountPaise === 0 || order.razorpayOrderId.startsWith("order_free_")
+}
+
 let scriptPromise: Promise<void> | null = null
 
 function loadScript(): Promise<void> {

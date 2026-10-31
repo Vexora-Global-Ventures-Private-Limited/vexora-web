@@ -7,6 +7,9 @@ import { Check, ChevronLeft, ChevronRight, Crown, ImagePlus, Loader2, Pencil, Pl
 import { ROUTES } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 import { HOMEPAGE_IMAGES } from "@/lib/homepage-images"
+import { isUnsignedUploadConfigured } from "@/lib/cloudinary"
+import { ImageUploadButton } from "@/components/site/image-upload-button"
+import { ListingPhotos } from "@/components/listings/listing-photos"
 import { formatPaise, propertyTypeLabel } from "@/lib/api-mappers"
 import { getApiErrorCode, getApiErrorMessage } from "@/lib/api-error"
 import { useGetActiveLocationsQuery, useGetPublicConfigQuery } from "@/store/api/searchApi"
@@ -62,8 +65,8 @@ type Step = 1 | 2 | 3 | 4 | 5
 
 const STEP_LABELS: Record<Step, string> = { 1: "Basics", 2: "Location", 3: "Details", 4: "Photos", 5: "Review" }
 
-// Demo-mode photo picker: Cloudinary isn't connected (sign returns null),
-// so photos are saved as plain URLs — either these or any https URL pasted in.
+// Sample photos for testing. Real photos are uploaded to Cloudinary
+// (ImageUploadButton) or pasted as https links; all are saved as plain URLs.
 const SAMPLE_PHOTOS = [
   HOMEPAGE_IMAGES.apartmentHighrise,
   HOMEPAGE_IMAGES.apartmentInterior,
@@ -211,10 +214,36 @@ export function ListingWizard({ draft }: { draft?: Listing | null }) {
   const { data: locations } = useGetActiveLocationsQuery()
   const [createListing, createState] = useCreateListingMutation()
   const [updateStep, updateState] = useUpdateListingStepMutation()
-  const [signMedia, signState] = useSignListingMediaMutation()
+  const [signMedia] = useSignListingMediaMutation()
   const [saveMedia, mediaState] = useSaveListingMediaMutation()
   const [submitListing, submitState] = useSubmitListingMutation()
-  const busy = createState.isLoading || updateState.isLoading || signState.isLoading || mediaState.isLoading || submitState.isLoading
+  const busy = createState.isLoading || updateState.isLoading || mediaState.isLoading || submitState.isLoading
+  // Device uploads: a backend-signed ticket when the API has Cloudinary
+  // credentials (probed once on reaching the photos step), else the
+  // unsigned preset from env. Neither → link pasting only.
+  const [signedUploads, setSignedUploads] = useState(false)
+  const listingId = listing?._id
+  useEffect(() => {
+    if (step !== 4 || !listingId) return
+    let cancelled = false
+    signMedia(listingId)
+      .unwrap()
+      .then((ticket) => !cancelled && setSignedUploads(!!ticket))
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [step, listingId, signMedia])
+  const canUpload = signedUploads || isUnsignedUploadConfigured()
+  const addUploadedPhotos = (urls: string[]) => {
+    setPhotoError(null)
+    setPhotos((p) => {
+      const room = MAX_PHOTOS - p.length
+      const fresh = urls.filter((u) => !p.includes(u))
+      if (fresh.length > room) setPhotoError(`You can add up to ${MAX_PHOTOS} photos.`)
+      return [...p, ...fresh.slice(0, Math.max(0, room))]
+    })
+  }
 
   const propertyTypes = config?.allowedPropertyTypes ?? []
   const bhkValues = config?.allowedBhkValues ?? []
@@ -331,15 +360,10 @@ export function ListingWizard({ draft }: { draft?: Listing | null }) {
         setListing(updated)
       } else if (step === 4 && current) {
         if (photos.length > 0) {
-          // A signed ticket means real Cloudinary is configured — direct
-          // browser uploads would go there. Today it's always null (demo
-          // mode), so the URLs are saved as-is.
-          const ticket = await signMedia(current._id).unwrap()
-          if (ticket) {
-            setError("Direct photo uploads aren't set up in this build yet — paste image URLs instead.")
-            return false
-          }
-          // Replaces the listing's whole photo set; first URL = cover.
+          // Uploaded photos are already on Cloudinary (uploaded when picked),
+          // so every entry is a plain https URL here. POST /media APPENDS to
+          // the saved photos (verified 2026-10-30) — the saved ones are
+          // managed separately in the photo step (ListingPhotos).
           const res = await saveMedia({ id: current._id, urls: photos }).unwrap()
           setListing(res.listing)
           setPhotosAlreadySaved(true)
@@ -696,9 +720,26 @@ export function ListingWizard({ draft }: { draft?: Listing | null }) {
         {step === 4 && (
           <div>
             <p className="text-sm text-brand-muted-foreground">
-              Add photos by https link or pick sample images (up to {MAX_PHOTOS}). The first photo is the cover.
-              {photosAlreadySaved && photos.length === 0 && " Photos are already saved for this draft — adding new ones replaces them."}
+              {canUpload ? "Upload photos, paste an https link" : "Add photos by https link"} or pick sample images (up to {MAX_PHOTOS}). The first photo is the cover.
             </p>
+            {photosAlreadySaved && listing && (
+              <div className="mt-4">
+                <p className={labelClass}>Saved photos</p>
+                <ListingPhotos listingId={listing._id} editable className="mt-2" />
+                <p className={cn(labelClass, "mt-5")}>Add more</p>
+              </div>
+            )}
+            {canUpload && listing && (
+              <ImageUploadButton
+                folder="listings"
+                multiple
+                maxFiles={MAX_PHOTOS - photos.length}
+                disabled={photos.length >= MAX_PHOTOS}
+                getTicket={signedUploads ? () => signMedia(listing._id).unwrap() : undefined}
+                onUploaded={addUploadedPhotos}
+                className="mt-4"
+              />
+            )}
             <div className="mt-4 flex gap-2">
               <label htmlFor={`${ids}-photo`} className="sr-only">Photo link</label>
               <input
@@ -923,9 +964,14 @@ function WizardOutcome({
         <p className="mt-2 text-sm text-brand-muted-foreground">
           Your plan requires KYC verification before listings can be submitted. Your draft is saved — come back and submit once you&apos;re verified.
         </p>
-        <button onClick={onBack} className="mt-6 border border-brand-border px-5 py-2.5 text-sm font-bold text-brand-secondary hover:bg-brand-surface">
-          Back to review
-        </button>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button onClick={() => router.push(ROUTES.dashboardTab("verification"))} className="btn-gold relative overflow-hidden px-6 py-2.5 text-sm font-bold">
+            <span className="relative z-10">Verify now</span>
+          </button>
+          <button onClick={onBack} className="border border-brand-border px-5 py-2.5 text-sm font-bold text-brand-secondary hover:bg-brand-surface">
+            Back to review
+          </button>
+        </div>
       </div>
     )
   }

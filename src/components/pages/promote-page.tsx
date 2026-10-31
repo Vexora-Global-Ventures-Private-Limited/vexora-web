@@ -1,6 +1,8 @@
 "use client"
 
 import { useMemo, useState } from "react"
+import { isUnsignedUploadConfigured } from "@/lib/cloudinary"
+import { ImageUploadButton } from "@/components/site/image-upload-button"
 import { motion, AnimatePresence } from "framer-motion"
 import {
   ArrowLeft, ArrowRight, Check, LayoutPanelTop, Building2, Play, Crown,
@@ -184,7 +186,8 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
     if (!ad) return
     setError(null)
     try {
-      // Cloudinary is in demo mode, so the image URL stands in for the public id.
+      // The backend stores whatever goes in cloudinaryPublicId and serves it
+      // as the image, so the full https URL (uploaded or pasted) goes here.
       await setCreative({
         id: ad._id,
         creatives: [{ mediaType: "image", cloudinaryPublicId: imageUrl.trim(), ...(targetUrl.trim() ? { targetUrl: targetUrl.trim() } : {}) }],
@@ -431,12 +434,25 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
           {step === 3 && info?.needsCreative && (
             <motion.div key="step3" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.4 }}>
               <h2 className="font-serif text-3xl font-bold text-brand-secondary">Your ad creative</h2>
-              <p className="mt-2 text-sm text-brand-secondary/65">Paste a hosted image URL — direct uploads arrive once media hosting is connected.</p>
+              <p className="mt-2 text-sm text-brand-secondary/65">
+                {isUnsignedUploadConfigured() ? "Upload your banner image, or paste a hosted image link." : "Paste a hosted image URL — direct uploads arrive once media hosting is connected."}
+              </p>
 
               <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1fr]">
                 <div className="space-y-4 border border-brand-border-light bg-card p-6">
                   <div>
-                    <label htmlFor="ad-image-url" className={labelClass}>Image URL</label>
+                    <label htmlFor="ad-image-url" className={labelClass}>Image</label>
+                    {isUnsignedUploadConfigured() && (
+                      <ImageUploadButton
+                        folder="ads"
+                        label="Upload image"
+                        onUploaded={([url]) => {
+                          setImageUrl(url)
+                          setImageBroken(false)
+                        }}
+                        className="mb-2 mt-1.5"
+                      />
+                    )}
                     <input
                       id="ad-image-url"
                       value={imageUrl}
