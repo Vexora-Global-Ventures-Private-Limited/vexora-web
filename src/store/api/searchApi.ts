@@ -3,8 +3,11 @@ import { baseApi } from "./baseApi"
 /**
  * One search hit / property detail. Every key is snake_case on purpose
  * (Meilisearch convention, per the backend's indexer) — unlike the rest of
- * the API, which is camelCase. Has NO photo fields at all (verified live
- * 2026-10-24), so cards render a placeholder image — see api-mappers.ts.
+ * the API, which is camelCase.
+ *
+ * `photos` added by the backend 2026-10-31 (was missing entirely before
+ * that — the 2026-10-24 note below is stale, cards no longer need the
+ * placeholder fallback for a listing that actually has photos).
  */
 export type SearchDocument = {
   id: string
@@ -33,6 +36,8 @@ export type SearchDocument = {
   seller_id: string
   renewal_count: number
   created_at: number
+  /** Real image URLs, cover first. Empty array if the listing has none yet. */
+  photos: string[]
 }
 
 export type SearchSort = "relevance" | "price_asc" | "price_desc" | "newest"

@@ -2,7 +2,12 @@ import { baseApi } from "./baseApi"
 
 export type ListingStatus = "draft" | "pending_review" | "live" | "rejected" | "expired" | "removed" | string
 
-/** Owner-side listing document (camelCase, unlike SearchDocument). Has no media — media comes back only from the media endpoints. */
+/**
+ * Owner-side listing document (camelCase, unlike SearchDocument).
+ * `media` added by the backend 2026-10-31 — GET /listings/{id} and
+ * /listings/mine both embed it directly now (the old reorder-hack
+ * `getListingMedia` query below predates this and is no longer needed).
+ */
 export type Listing = {
   _id: string
   sellerId: string
@@ -37,6 +42,8 @@ export type Listing = {
   deletedAt: string | null
   createdAt: string
   updatedAt: string
+  /** Cover first. Empty/absent if nothing's been uploaded yet. */
+  media?: ListingMedia[]
 }
 
 export type ListingMedia = {
@@ -150,13 +157,15 @@ export const listingsApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, { id }) => [{ type: "Listing", id }, { type: "ListingMedia", id }, "MyListings"],
     }),
     /**
-     * The listing's saved photos, cover first. No endpoint reads media
-     * (GET /listings/{id} and /listings/mine leave it out, there's no GET
-     * /listings/{id}/media, and search/property pages have no photos —
-     * UNRESOLVED-ISSUES #64), but PATCH …/media/reorder with an empty order
-     * returns the full list and changes nothing (verified live 2026-10-30:
-     * positions identical across repeated calls). Owner only. Swap for a
-     * real GET once the backend adds one.
+     * The listing's saved photos, cover first — via the reorder
+     * endpoint with an empty order (changes nothing, just returns the
+     * list), since there's still no dedicated GET /listings/{id}/media.
+     *
+     * Superseded 2026-10-31: GET /listings/{id} and /listings/mine now
+     * embed `media` directly (Listing.media) — read it from there
+     * instead for anything that already has the listing loaded. This
+     * query is only still useful for a screen that has just the id
+     * and nothing else.
      */
     getListingMedia: builder.query<ListingMedia[], string>({
       query: (id) => ({ url: `/api/v1/listings/${id}/media/reorder`, method: "PATCH", body: { order: [] } }),

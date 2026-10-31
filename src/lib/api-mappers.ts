@@ -79,11 +79,13 @@ export function formatLocation(doc: Pick<SearchDocument, "locality" | "sub_local
  *
  * `id` is the listing id (what shortlists/leads take); `slug` is what the
  * public detail route takes — always link with ROUTES.propertyDetail(slug).
- * Fields the API simply doesn't have (baths, amenities, transparency, RERA,
- * photos) are left empty/omitted rather than invented.
+ * Fields the API simply doesn't have (baths, amenities, transparency, RERA)
+ * are left empty/omitted rather than invented. Photos: real ones first
+ * (backend added `photos` 2026-10-31), stock placeholder only when a
+ * listing genuinely has none uploaded yet.
  */
 export function searchDocToProperty(doc: SearchDocument): Property & { slug: string; sellerId: string; badges: string[] } {
-  const images = placeholderImages(doc.property_type, doc.id)
+  const images = doc.photos && doc.photos.length > 0 ? doc.photos : placeholderImages(doc.property_type, doc.id)
   const priceCr = doc.price ? doc.price / 100 / 1e7 : 0
   const isCommercial = ["commercial", "office", "warehouse"].includes(doc.property_type)
   return {

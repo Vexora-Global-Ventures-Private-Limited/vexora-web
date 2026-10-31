@@ -200,7 +200,7 @@ export function ListingsTab(_props: { tier: Tier }) {
           {filtered.map((l, i) => {
             const isDraft = l.status === "draft"
             const isLive = l.status === "live"
-            const image = placeholderImages(l.propertyType, l._id)[0]
+            const image = l.media && l.media.length > 0 ? l.media[0].url : placeholderImages(l.propertyType, l._id)[0]
             return (
               <motion.div
                 key={l._id}
