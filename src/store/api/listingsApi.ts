@@ -45,6 +45,13 @@ export type ListingMedia = {
   type: string
   url: string
   position: number
+  createdAt?: string
+}
+
+// POST /media appends and restarts positions at 0, so ties are common —
+// break them by upload time.
+function sortMedia(media: ListingMedia[]): ListingMedia[] {
+  return [...media].sort((a, b) => a.position - b.position || (a.createdAt ?? "").localeCompare(b.createdAt ?? ""))
 }
 
 export type Step1Body = { propertyType?: string; bhk?: number; pricePaise?: number; purpose?: string; title?: string }
@@ -140,15 +147,31 @@ export const listingsApi = baseApi.injectEndpoints({
     saveListingMedia: builder.mutation<{ listing: Listing; media: ListingMedia[] }, { id: string; urls: string[] }>({
       query: ({ id, urls }) => ({ url: `/api/v1/listings/${id}/media`, method: "POST", body: { urls } }),
       transformResponse: (res: { data: { listing: Listing; media: ListingMedia[] } }) => res.data,
-      invalidatesTags: (_r, _e, { id }) => [{ type: "Listing", id }, "MyListings"],
+      invalidatesTags: (_r, _e, { id }) => [{ type: "Listing", id }, { type: "ListingMedia", id }, "MyListings"],
+    }),
+    /**
+     * The listing's saved photos, cover first. No endpoint reads media
+     * (GET /listings/{id} and /listings/mine leave it out, there's no GET
+     * /listings/{id}/media, and search/property pages have no photos —
+     * UNRESOLVED-ISSUES #64), but PATCH …/media/reorder with an empty order
+     * returns the full list and changes nothing (verified live 2026-10-30:
+     * positions identical across repeated calls). Owner only. Swap for a
+     * real GET once the backend adds one.
+     */
+    getListingMedia: builder.query<ListingMedia[], string>({
+      query: (id) => ({ url: `/api/v1/listings/${id}/media/reorder`, method: "PATCH", body: { order: [] } }),
+      transformResponse: (res: { data: { media: ListingMedia[] } }) => sortMedia(res.data.media),
+      providesTags: (_r, _e, id) => [{ type: "ListingMedia", id }],
     }),
     reorderListingMedia: builder.mutation<{ media: ListingMedia[] }, { id: string; order: string[] }>({
       query: ({ id, order }) => ({ url: `/api/v1/listings/${id}/media/reorder`, method: "PATCH", body: { order } }),
       transformResponse: (res: { data: { media: ListingMedia[] } }) => res.data,
+      invalidatesTags: (_r, _e, { id }) => [{ type: "ListingMedia", id }],
     }),
     deleteListingMedia: builder.mutation<{ media: ListingMedia[] }, { id: string; mediaId: string }>({
       query: ({ id, mediaId }) => ({ url: `/api/v1/listings/${id}/media/${mediaId}`, method: "DELETE" }),
       transformResponse: (res: { data: { media: ListingMedia[] } }) => res.data,
+      invalidatesTags: (_r, _e, { id }) => [{ type: "ListingMedia", id }],
     }),
     // Needs an active membership (402 MEMBERSHIP_REQUIRED) and wizardStep >= 5.
     submitListing: builder.mutation<Listing, string>({
@@ -256,6 +279,7 @@ export const {
   useUpdateListingStepMutation,
   useSignListingMediaMutation,
   useSaveListingMediaMutation,
+  useGetListingMediaQuery,
   useReorderListingMediaMutation,
   useDeleteListingMediaMutation,
   useSubmitListingMutation,

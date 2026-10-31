@@ -42,7 +42,11 @@ export function SlotCheckoutDialog({ onClose }: { onClose: () => void }) {
   const editable = checkout.phase === "idle" || checkout.phase === "review" || (checkout.phase === "failed" && !membershipRequired)
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !checkout.isBusy && onClose()}>
+    // Hidden while Razorpay's window is up: an open (modal) dialog blocks
+    // clicks and focus everywhere outside itself — including Razorpay's
+    // window, whose card fields then can't be typed into. The checkout state
+    // lives in this component, so it reappears as it was when Razorpay closes.
+    <Dialog open={checkout.phase !== "paying"} onOpenChange={(open) => !open && !checkout.isBusy && onClose()}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">Extra listing slots</DialogTitle>

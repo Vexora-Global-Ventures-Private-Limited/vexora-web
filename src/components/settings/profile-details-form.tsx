@@ -1,6 +1,8 @@
 "use client"
 
 import { useId, useState, type ReactNode } from "react"
+import { isUnsignedUploadConfigured } from "@/lib/cloudinary"
+import { ImageUploadButton } from "@/components/site/image-upload-button"
 import type { User } from "@/lib/nav-store"
 import { useLoadSession } from "@/hooks/use-auth"
 import { getApiErrorMessage } from "@/lib/api-error"
@@ -272,7 +274,10 @@ export function ProfileDetailsForm({
 
         {showAvatar && (
           <div>
-            <label htmlFor={`${ids}-avatarUrl`} className={labelClass}>Photo URL (optional)</label>
+            <label htmlFor={`${ids}-avatarUrl`} className={labelClass}>Photo (optional) — upload or paste a link</label>
+            {isUnsignedUploadConfigured() && (
+              <ImageUploadButton folder="avatars" onUploaded={([url]) => update("avatarUrl", url)} className="mb-2 mt-1.5" />
+            )}
             <input
               id={`${ids}-avatarUrl`}
               value={form.avatarUrl}

@@ -61,6 +61,8 @@ export type SearchResult = {
 export type PublicConfig = {
   allowedBhkValues: number[]
   allowedPropertyTypes: string[]
+  /** G8 kyc_document_types — what POST /kyc/submissions accepts (e.g. pan, aadhaar, cin, gst). */
+  allowedKycDocumentTypes?: string[]
 }
 
 export type Location = {

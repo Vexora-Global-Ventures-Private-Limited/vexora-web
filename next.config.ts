@@ -10,6 +10,12 @@ const nextConfig: NextConfig = {
         hostname: "images.unsplash.com",
         pathname: "/**",
       },
+      // Photos uploaded through lib/cloudinary.ts.
+      {
+        protocol: "https",
+        hostname: "res.cloudinary.com",
+        pathname: "/**",
+      },
     ],
   },
   // Baseline security headers. No framing (stops clickjacking on one-click

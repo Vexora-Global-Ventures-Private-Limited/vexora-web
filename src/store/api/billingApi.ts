@@ -67,6 +67,10 @@ export type Order = {
   currency: string
   status: OrderStatus
   createdAt: string
+  razorpayOrderId?: string
+  /** Replaying POST /billing/orders with this key returns this same order (with razorpayKeyId) — how an unfinished payment is resumed. */
+  idempotencyKey?: string
+  referralCode?: string
 }
 
 export type Receipt = {
@@ -135,6 +139,7 @@ export const {
   useCreateOrderMutation,
   useBuySlotsMutation,
   useVerifyOrderMutation,
+  useGetOrderQuery,
   useLazyGetOrderQuery,
   useGetReceiptsQuery,
 } = billingApi

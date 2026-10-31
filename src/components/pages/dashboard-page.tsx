@@ -6,6 +6,7 @@ import { useTheme } from "next-themes"
 import {
   LayoutDashboard, Building2, Users, BarChart3, FileText, Settings, LogOut,
   Megaphone, Crown, Heart, Send, Bell, Sun, Moon, Gift, Trash2,
+  BadgeCheck,
 } from "lucide-react"
 import { useNav, canSell, type User } from "@/lib/nav-store"
 import { useAuth } from "@/hooks/use-auth"
@@ -29,6 +30,7 @@ import { EnquiriesTab } from "@/components/dashboards/tabs/enquiries-tab"
 import { NotificationsTab } from "@/components/dashboards/tabs/notifications-tab"
 import { ProjectsTab } from "@/components/dashboards/tabs/projects-tab"
 import { ReferralsTab } from "@/components/dashboards/tabs/referrals-tab"
+import { VerificationTab } from "@/components/dashboards/tabs/verification-tab"
 import { BillingHistory } from "@/components/billing/billing-history"
 import { greetingName } from "@/components/crm/overview-widgets"
 
@@ -113,6 +115,8 @@ export function DashboardPage() {
       : []),
     ...(isPaidMember ? [{ id: "referrals", label: "Referrals", icon: Gift } satisfies ShellNavItem] : []),
     notificationsItem,
+    // KYC → trust badge. Real accounts only (demo accounts have no API session).
+    ...(user.id ? [{ id: "verification", label: "Verification", icon: BadgeCheck } satisfies ShellNavItem] : []),
     { id: "settings", label: "Settings", icon: Settings },
   ]
 
@@ -149,6 +153,7 @@ export function DashboardPage() {
       {isSeller && tab === "analytics" && <AnalyticsTab tier={user.tier} />}
       {isPaidMember && tab === "referrals" && <ReferralsTab user={user} />}
       {tab === "notifications" && <NotificationsTab />}
+      {user.id && tab === "verification" && <VerificationTab isPaidMember={isPaidMember} />}
       {tab === "settings" && <SettingsTab user={user} logout={logout} />}
     </DashboardShell>
   )

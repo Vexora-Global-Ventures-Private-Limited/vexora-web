@@ -73,8 +73,12 @@ export function MembershipCheckoutDialog({
     }
   }
 
+  // A free plan can't be extended by renewal (frontend rule for now — a ₹0
+  // renewal order can never complete and locks the account; UNRESOLVED #69).
+  const freeRenewal = isFree && purpose === "membership_renewal"
+
   const pay = () => {
-    if (!tier.planId) return
+    if (!tier.planId || freeRenewal) return
     void checkout.start((idempotencyKey) =>
       createOrder({
         purpose,
@@ -82,14 +86,20 @@ export function MembershipCheckoutDialog({
         ...(allowReferral && referral ? { referralCode: referral.code } : {}),
         idempotencyKey,
       }).unwrap(),
+      // Clicking Pay again for the same plan reopens the earlier unpaid order.
+      { resumable: { purpose, planId: tier.planId } },
     )
   }
 
-  const locked = checkout.isBusy || checkout.phase === "paid" || checkout.phase === "timeout"
+  const locked = checkout.isBusy || checkout.phase === "paid" || checkout.phase === "timeout" || checkout.phase === "free_pending"
   const referralPendingApply = allowReferral && !!referralInput.trim() && !referral
 
   return (
-    <Dialog open onOpenChange={(open) => !open && !checkout.isBusy && onClose()}>
+    // Hidden while Razorpay's window is up: an open (modal) dialog blocks
+    // clicks and focus everywhere outside itself — including Razorpay's
+    // window, whose card fields then can't be typed into. The checkout state
+    // lives in this component, so it reappears as it was when Razorpay closes.
+    <Dialog open={checkout.phase !== "paying"} onOpenChange={(open) => !open && !checkout.isBusy && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="font-serif text-2xl">{tier.name} membership</DialogTitle>
@@ -171,20 +181,25 @@ export function MembershipCheckoutDialog({
           <>
             <button
               onClick={pay}
-              disabled={!tier.planId || referralPendingApply || isValidating}
+              disabled={!tier.planId || referralPendingApply || isValidating || freeRenewal}
               className="btn-gold relative w-full overflow-hidden py-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <span className="relative z-10">{isFree ? `Activate ${tier.name} — free` : `Pay ${tier.price}`}</span>
+              <span className="relative z-10">{isFree ? `Request ${tier.name} — free` : `Pay ${tier.price}`}</span>
             </button>
+            {freeRenewal && (
+              <p className="text-center text-[11px] text-brand-secondary/55">A free plan can&apos;t be extended by renewing — upgrade to a paid plan instead.</p>
+            )}
             {referralPendingApply && (
               <p className="text-center text-[11px] text-brand-secondary/55">Apply the referral code (or clear it) to continue.</p>
             )}
             <p className="text-center text-[11px] text-brand-secondary/50">
-              Secure payment by Razorpay. Your membership activates once the payment is confirmed.
+              {isFree
+                ? "Nothing to pay — our team switches free memberships on, usually the same day."
+                : "Secure payment by Razorpay. Your membership activates once the payment is confirmed."}
             </p>
           </>
         )}
-        {(checkout.phase === "paid" || checkout.phase === "timeout") && (
+        {(checkout.phase === "paid" || checkout.phase === "timeout" || checkout.phase === "free_pending") && (
           <button onClick={onClose} className="w-full bg-ink-black py-3 text-sm font-bold text-brand-primary">
             Done
           </button>

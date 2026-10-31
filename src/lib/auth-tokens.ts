@@ -22,3 +22,20 @@ export function clearTokens(): void {
   window.localStorage.removeItem(ACCESS_TOKEN_KEY)
   window.localStorage.removeItem(REFRESH_TOKEN_KEY)
 }
+
+/**
+ * The access token's claims (unverified — only for client-side decisions
+ * like "is this token stale?", never for authorisation). null when there's
+ * no token or it can't be read.
+ */
+export function getAccessTokenClaims(): Record<string, unknown> | null {
+  const token = getAccessToken()
+  const payload = token?.split(".")[1]
+  if (!payload) return null
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(payload.length / 4) * 4, "=")
+    return JSON.parse(atob(base64)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}

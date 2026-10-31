@@ -176,6 +176,7 @@ export const baseApi = createApi({
     "Shortlist",
     "Membership",
     "Listing",
+    "ListingMedia",
     "MyListings",
     "ListingQuota",
     "BuilderProfile",
@@ -187,6 +188,8 @@ export const baseApi = createApi({
     "Notifications",
     "NotificationPrefs",
     "Referrals",
+    "Kyc",
+    "Badges",
   ],
   endpoints: () => ({}),
 })
