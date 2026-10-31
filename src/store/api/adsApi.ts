@@ -23,6 +23,36 @@ export type Ad = {
   [key: string]: unknown
 }
 
+/**
+ * What GET /ad-serving/home-banner actually returns (verified live
+ * 2026-10-31): `{ id, targetUrl, creative: { mediaType, cloudinaryPublicId } }`
+ * — `id` not `_id`, ONE `creative`, no `targetCity`. Normalised here so
+ * the slots never fall back to a sample image or link to ".../undefined/...".
+ */
+export type ServedAd = {
+  id: string
+  /** The advertiser's https landing page; null = the banner isn't clickable. */
+  targetUrl: string | null
+  /** The uploaded creative (https), or null if none. */
+  imageUrl: string | null
+  targetCity: string | null
+}
+
+const httpsOrNull = (v: unknown) => (typeof v === "string" && /^https:\/\//i.test(v.trim()) ? v.trim() : null)
+
+function toServedAd(raw: Record<string, unknown> | null | undefined): ServedAd | null {
+  if (!raw) return null
+  const id = typeof raw.id === "string" ? raw.id : typeof raw._id === "string" ? raw._id : null
+  if (!id) return null
+  const creative = (raw.creative ?? (Array.isArray(raw.creatives) ? raw.creatives[0] : null)) as Record<string, unknown> | null
+  return {
+    id,
+    targetUrl: httpsOrNull(raw.targetUrl) ?? httpsOrNull(creative?.targetUrl),
+    imageUrl: httpsOrNull(creative?.cloudinaryPublicId) ?? httpsOrNull(creative?.url),
+    targetCity: typeof raw.targetCity === "string" && raw.targetCity ? raw.targetCity : null,
+  }
+}
+
 export type AdPackage = {
   _id: string
   product: AdProduct
@@ -130,16 +160,26 @@ export const adsApi = baseApi.injectEndpoints({
       transformResponse: (res: { data: AdPackage[] }) => res.data,
     }),
     // Public. { ad: null } is normal (no active campaign).
-    getHomeBanner: builder.query<Ad | null, void>({
+    getHomeBanner: builder.query<ServedAd | null, void>({
       query: () => ({ url: "/api/v1/ad-serving/home-banner" }),
-      transformResponse: (res: { data: { ad: Ad | null } }) => res.data.ad,
+      transformResponse: (res: { data: { ad: Record<string, unknown> | null } }) => toServedAd(res.data.ad),
     }),
   }),
 })
 
-/** Click-through is a 302 to the ad's target — render it as a plain link. */
-export function adClickHref(adId: string) {
-  return `${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/v1/ad-serving/${adId}/click`
+/**
+ * Count a click: POST /ad-serving/{id}/click (GET is a 404 — verified
+ * 2026-10-31). Sent as a beacon so it survives the new tab opening; the
+ * API's 302 is ignored — the caller opens the ad's own targetUrl.
+ */
+export function recordAdClick(adId: string) {
+  const url = `${process.env.NEXT_PUBLIC_API_BASE_URL ?? ""}/api/v1/ad-serving/${encodeURIComponent(adId)}/click`
+  try {
+    if (navigator.sendBeacon?.(url)) return
+  } catch {
+    // Fall through to fetch.
+  }
+  void fetch(url, { method: "POST", keepalive: true, mode: "no-cors" }).catch(() => {})
 }
 
 export const {

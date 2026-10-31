@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useState } from "react"
+import { Fragment, useMemo, useState, useSyncExternalStore } from "react"
 import { motion } from "framer-motion"
 import {
   ArrowLeft, Plus, Megaphone, Clock, Wallet, Pause, Play, ArrowUpRight, LayoutPanelTop,
@@ -12,6 +12,8 @@ import { formatPaise } from "@/lib/api-mappers"
 import { getApiErrorMessage } from "@/lib/api-error"
 import { AnimatedCounter } from "@/components/motion/animated-counter"
 import { AdMetricsPanel, formatCtr } from "@/components/ads/ad-metrics-panel"
+import { PhotoLightbox } from "@/components/site/photo-lightbox"
+import { getRememberedCreative, type StoredCreative } from "@/lib/ad-creatives"
 import { usePendingOrder, adPendingKey } from "@/hooks/use-checkout"
 import {
   useGetMyAdsQuery,
@@ -19,6 +21,7 @@ import {
   useResumeAdMutation,
   useResubmitAdMutation,
   useGetAdMetricsQuery,
+  useGetHomeBannerQuery,
   type Ad,
   type AdProduct,
 } from "@/store/api/adsApi"
@@ -178,6 +181,29 @@ export function AdvertiserDashboard() {
   )
 }
 
+// Products whose ad carries an uploaded image.
+const AD_HAS_CREATIVE: Record<string, boolean> = { banner: true, project_promotion: true }
+
+const subscribeNoop = () => () => {}
+
+/**
+ * The ad's image + link: what this device remembered at upload time, else
+ * the live home banner when it's this ad. The API doesn't return creatives
+ * to the owner (UNRESOLVED-ISSUES #25).
+ */
+function useAdCreative(ad: Ad): StoredCreative | null {
+  const { data: served } = useGetHomeBannerQuery(undefined, { skip: ad.product !== "banner" })
+  const rememberedRaw = useSyncExternalStore(
+    subscribeNoop,
+    () => JSON.stringify(getRememberedCreative(ad._id)),
+    () => "null",
+  )
+  const remembered = useMemo(() => JSON.parse(rememberedRaw) as StoredCreative | null, [rememberedRaw])
+  if (remembered) return remembered
+  if (served?.id === ad._id && served.imageUrl) return { imageUrl: served.imageUrl, targetUrl: served.targetUrl }
+  return null
+}
+
 function AdRow({ ad, expanded, onToggle }: { ad: Ad; expanded: boolean; onToggle: () => void }) {
   const Icon = productIcons[ad.product] ?? Megaphone
   const style = AD_STATUS_STYLE[ad.status] ?? AD_STATUS_STYLE.draft
@@ -187,7 +213,9 @@ function AdRow({ ad, expanded, onToggle }: { ad: Ad; expanded: boolean; onToggle
   const [resumeAd, { isLoading: resuming }] = useResumeAdMutation()
   const [resubmitAd, { isLoading: resubmitting }] = useResubmitAdMutation()
   const [error, setError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState(false)
   const router = useRouter()
+  const creative = useAdCreative(ad)
   // An ad stays "draft" until its payment captures, so a paid-but-confirming
   // ad would otherwise look unpaid here. Remembered by the checkout on this device.
   const pendingOrder = usePendingOrder(ad.status === "draft" ? adPendingKey(ad._id) : undefined)
@@ -209,15 +237,39 @@ function AdRow({ ad, expanded, onToggle }: { ad: Ad; expanded: boolean; onToggle
     <Fragment>
       <tr className="hover:bg-brand-surface/40">
         <td className="px-4 py-3">
-          <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center bg-gradient-to-br from-brand-primary to-brand-primary-dark">
-              <Icon className="h-4 w-4 text-brand-secondary" />
-            </div>
-            <div>
+          <div className="flex items-center gap-3">
+            {creative ? (
+              <button
+                type="button"
+                onClick={() => setViewing(true)}
+                aria-label="View ad image"
+                className="group relative h-12 w-20 shrink-0 overflow-hidden bg-ink-black ring-1 ring-brand-border hover:ring-brand-primary"
+              >
+                <img src={creative.imageUrl} alt="" className="h-full w-full object-cover transition-transform group-hover:scale-105" />
+              </button>
+            ) : (
+              <div
+                className="grid h-12 w-20 shrink-0 place-items-center bg-gradient-to-br from-brand-primary to-brand-primary-dark"
+                title={AD_HAS_CREATIVE[ad.product] ? "Image not available on this device — the API doesn't return ad images yet" : undefined}
+              >
+                <Icon className="h-4 w-4 text-brand-secondary" />
+              </div>
+            )}
+            <div className="min-w-0">
               <div className="text-xs font-bold text-brand-secondary">{AD_PRODUCT_LABEL[ad.product] ?? ad.product}</div>
               <div className="text-[10px] text-brand-secondary/55">{subtitle}</div>
+              {creative?.targetUrl ? (
+                <a href={creative.targetUrl} target="_blank" rel="noopener noreferrer" className="block max-w-[220px] truncate text-[10px] text-brand-primary-dark hover:underline" title={creative.targetUrl}>
+                  → {creative.targetUrl.replace(/^https:\/\//, "")}
+                </a>
+              ) : creative ? (
+                <div className="text-[10px] text-amber-600">No click-through link</div>
+              ) : null}
             </div>
           </div>
+          {viewing && creative && (
+            <PhotoLightbox images={[creative.imageUrl]} index={0} onIndexChange={() => {}} onClose={() => setViewing(false)} title={AD_PRODUCT_LABEL[ad.product] ?? "Ad"} />
+          )}
         </td>
         <td className="px-4 py-3 text-brand-secondary/65">{ad.amountPaise ? formatPaise(ad.amountPaise) : "—"}</td>
         <td className="px-4 py-3 text-right font-bold text-brand-secondary">{metrics ? metrics.totals.impressions.toLocaleString("en-IN") : "—"}</td>

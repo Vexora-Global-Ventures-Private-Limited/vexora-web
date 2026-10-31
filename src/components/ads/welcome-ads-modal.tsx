@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react"
 import { ArrowUpRight, Megaphone, X } from "lucide-react"
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog"
-import { adClickHref, useGetHomeBannerQuery } from "@/store/api/adsApi"
-import { bannerImage } from "@/components/ads/home-banner-ad-slot"
+import { useGetHomeBannerQuery } from "@/store/api/adsApi"
+import { AdLink } from "@/components/ads/home-banner-ad-slot"
 
 /**
  * First-screen welcome popup for the currently served home banner
@@ -38,15 +38,36 @@ export function WelcomeAdsModal() {
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
-    if (!ad || alreadySeen(ad._id)) return
+    if (!ad?.imageUrl || alreadySeen(ad.id)) return
     const timer = setTimeout(() => {
-      markSeen(ad._id)
+      markSeen(ad.id)
       setOpen(true)
     }, 600)
     return () => clearTimeout(timer)
   }, [ad])
 
-  if (!ad) return null
+  if (!ad?.imageUrl) return null
+
+  const art = (
+    <>
+      <img src={ad.imageUrl} alt="" aria-hidden className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl" />
+      <img src={ad.imageUrl} alt="Sponsored banner" className="absolute inset-0 h-full w-full object-contain transition duration-700 group-hover:scale-[1.02]" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.42)_0%,rgba(0,0,0,0)_26%,rgba(0,0,0,0)_70%,rgba(0,0,0,0.5)_100%)]" />
+      <div className="absolute inset-x-0 top-0 p-4 sm:p-6">
+        <span className="inline-flex items-center gap-1.5 border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur-md">
+          <Megaphone className="h-3.5 w-3.5" /> Sponsored{ad.targetCity ? ` · ${ad.targetCity}` : ""}
+        </span>
+      </div>
+      {ad.targetUrl && (
+        <div className="absolute inset-x-0 bottom-0 flex justify-end p-4 sm:p-6">
+          <span className="flex items-center gap-1.5 bg-brand-primary px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-black">
+            Visit <ArrowUpRight className="h-4 w-4" />
+          </span>
+        </div>
+      )}
+    </>
+  )
+  const frame = "group relative block h-[min(28rem,58svh)] w-full overflow-hidden bg-ink-black sm:h-[min(36rem,76svh)]"
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -68,26 +89,13 @@ export function WelcomeAdsModal() {
           <X className="h-5 w-5" />
         </button>
 
-        <a
-          href={adClickHref(ad._id)}
-          target="_blank"
-          rel="noopener noreferrer sponsored"
-          onClick={() => setOpen(false)}
-          className="group relative block h-[min(28rem,58svh)] w-full overflow-hidden sm:h-[min(36rem,76svh)]"
-        >
-          <img src={bannerImage(ad)} alt="" className="absolute inset-0 h-full w-full object-cover transition duration-700 group-hover:scale-105" />
-          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.42)_0%,rgba(0,0,0,0)_26%,rgba(0,0,0,0.05)_46%,rgba(0,0,0,0.62)_100%)]" />
-          <div className="absolute inset-x-0 top-0 p-4 sm:p-6">
-            <span className="inline-flex items-center gap-1.5 border border-white/15 bg-black/45 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white backdrop-blur-md">
-              <Megaphone className="h-3.5 w-3.5" /> Sponsored{ad.targetCity ? ` · ${ad.targetCity}` : ""}
-            </span>
-          </div>
-          <div className="absolute inset-x-0 bottom-0 flex justify-end p-4 sm:p-6">
-            <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-brand-primary">
-              Explore <ArrowUpRight className="h-4 w-4" />
-            </span>
-          </div>
-        </a>
+        {ad.targetUrl ? (
+          <AdLink ad={ad} className={frame} onNavigate={() => setOpen(false)}>
+            {art}
+          </AdLink>
+        ) : (
+          <div className={frame}>{art}</div>
+        )}
       </DialogContent>
     </Dialog>
   )
