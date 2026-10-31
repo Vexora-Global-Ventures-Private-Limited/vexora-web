@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import { isUnsignedUploadConfigured } from "@/lib/cloudinary"
+import { rememberAdCreative } from "@/lib/ad-creatives"
 import { ImageUploadButton } from "@/components/site/image-upload-button"
 import { motion, AnimatePresence } from "framer-motion"
 import {
@@ -192,6 +193,8 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
         id: ad._id,
         creatives: [{ mediaType: "image", cloudinaryPublicId: imageUrl.trim(), ...(targetUrl.trim() ? { targetUrl: targetUrl.trim() } : {}) }],
       }).unwrap()
+      // The API never returns creatives to the owner — keep it for the dashboard.
+      rememberAdCreative(ad._id, { imageUrl: imageUrl.trim(), targetUrl: targetUrl.trim() || null })
       setStep(4)
     } catch (err) {
       setError(getApiErrorMessage(err) ?? "Couldn't save the creative.")
@@ -222,7 +225,10 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
       (product === "sponsored" && !!listingId) ||
       (product === "project_promotion" && isObjectId(projectId)))
   const imageOk = isHttpsUrl(imageUrl)
-  const targetOk = !targetUrl.trim() || isHttpsUrl(targetUrl)
+  // A banner must link somewhere — otherwise visitors have nothing to click
+  // and the ad can never earn clicks. Optional for project promotion.
+  const linkRequired = product === "banner"
+  const targetOk = targetUrl.trim() ? isHttpsUrl(targetUrl) : !linkRequired
   const visibleSteps = steps.map((s) => (s.id === 3 && info && !info.needsCreative ? { ...s, label: "Creative (n/a)" } : s))
 
   return (
@@ -435,7 +441,9 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
             <motion.div key="step3" initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.4 }}>
               <h2 className="font-serif text-3xl font-bold text-brand-secondary">Your ad creative</h2>
               <p className="mt-2 text-sm text-brand-secondary/65">
-                {isUnsignedUploadConfigured() ? "Upload your banner image, or paste a hosted image link." : "Paste a hosted image URL — direct uploads arrive once media hosting is connected."}
+                {isUnsignedUploadConfigured() ? "Upload your banner image, or paste a hosted image link." : "Paste a hosted image URL — direct uploads arrive once media hosting is connected."}{" "}
+                Best results: a <b>wide image, about 1600 × 500 px</b> (3.2 : 1) — it fills the homepage banner edge to edge. Add a
+                click-through link, or the banner won&apos;t be clickable and won&apos;t get clicks.
               </p>
 
               <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1fr]">
@@ -470,7 +478,9 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
                     )}
                   </div>
                   <div>
-                    <label htmlFor="ad-target-url" className={labelClass}>Click-through URL (optional)</label>
+                    <label htmlFor="ad-target-url" className={labelClass}>
+                      Click-through URL {linkRequired ? "*" : "(optional)"}
+                    </label>
                     <input
                       id="ad-target-url"
                       value={targetUrl}
@@ -480,7 +490,15 @@ function PromoteFunnel({ resume }: { resume: Ad | null }) {
                       aria-invalid={!targetOk}
                       className={inputClass}
                     />
-                    {!targetOk && <p className="mt-1 text-[11px] text-red-500">Must be a full https:// link.</p>}
+                    {targetUrl.trim() && !isHttpsUrl(targetUrl) ? (
+                      <p className="mt-1 text-[11px] text-red-500">Must be a full https:// link.</p>
+                    ) : (
+                      linkRequired && (
+                        <p className="mt-1 text-[11px] text-brand-secondary/55">
+                          Where people go when they click your banner — your website, project page or listing.
+                        </p>
+                      )
+                    )}
                   </div>
                 </div>
                 <div className="grid min-h-48 place-items-center border-2 border-dashed border-brand-border-light bg-card p-2">
